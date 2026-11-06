@@ -1,0 +1,62 @@
+{
+  "record_type": "public_pose_model_selection",
+  "schema_version": 1,
+  "status": "frozen",
+  "confirmed_on": "2026-10-30",
+  "confirmed_by": "project_user",
+  "scope": "公开预训练人体姿态估计、关键点提取与骨架提取的默认模型选型",
+  "default_model": {
+    "family": "RTMO",
+    "name": "RTMO-l",
+    "size": "Large",
+    "keypoint_count": 17,
+    "keypoint_schema": "COCO-17",
+    "coordinate_dimension": 2,
+    "pretrained_weights": "official Body7",
+    "checkpoint_id": "rtmo-l_16xb16-600e_body7-640x640-b37118ce_20231211"
+  },
+  "official_reference": {
+    "project_url": "https://github.com/open-mmlab/mmpose/tree/main/projects/rtmo",
+    "config_url": "https://github.com/open-mmlab/mmpose/blob/main/configs/body_2d_keypoint/rtmo/body7/rtmo-l_16xb16-600e_body7-640x640.py",
+    "onnx_archive_url": "https://download.openmmlab.com/mmpose/v1/projects/rtmo/onnx_sdk/rtmo-l_16xb16-600e_body7-640x640-b37118ce_20231211.zip",
+    "onnx_filename": "end2end.onnx",
+    "onnx_file_sha256": "090096ca90f29163cc4f67137dcc0cd4b2ee95ea0af11764fbfda88dd2ae1140"
+  },
+  "tested_inference_reference": {
+    "input_size_wh": [640, 640],
+    "implementation": "rtmlib.RTMO",
+    "backend": "ONNX Runtime",
+    "note": "复现实验参考；部署后端本身未被冻结，不限制同一官方权重的其他兼容部署方式。"
+  },
+  "selection_policy": {
+    "use_when_model_unspecified": true,
+    "repeat_selection_question_required": false,
+    "user_requested_comparison_or_other_model_overrides_default": true
+  },
+  "comparison_only_models": [
+    {
+      "name": "MediaPipe Full",
+      "keypoint_count": 33,
+      "automatic_fallback": false
+    }
+  ],
+  "postprocessing": {
+    "status": "not_finalized",
+    "default_method": null,
+    "tested_methods": ["One Euro", "Savitzky-Golay", "forward-backward Butterworth"],
+    "preserve_raw_coordinates": true,
+    "preserve_original_confidence_and_missingness": true
+  },
+  "decision_basis": {
+    "experiment_date": "2026-10-27",
+    "evidence_type": "用户对本项目样例的视觉对比与选型确认",
+    "preferred_sample_view": "水下侧面",
+    "not_a_ground_truth_accuracy_benchmark": true
+  },
+  "known_limits": [
+    "纯水上视角存在明显漏检和岸边人物干扰，仍需专项攻克。",
+    "该默认选型不代表模型在所有泳姿、机位或遮挡条件下普遍最优。",
+    "平滑不能替代正确的目标识别，也不能将缺失关节视作真实观测。"
+  ],
+  "integration_note": "本文件是持久选型记录，不会自动修改模型服务运行时；真实推理接入状态以代码实现为准。"
+}
