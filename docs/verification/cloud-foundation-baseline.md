@@ -2,6 +2,8 @@
 
 记录日期：2026-11-06。事实代码基线为 `7082b729785957252ff5797a057f3151c6dd25c2`，文档变更为 `formalize-cloud-foundation-baseline`，评审入口为 [PR #1](https://github.com/TuIanL/zhiyong-swim-platform/pull/1)。本文件记录文档实施和证据核对，不追认事前审批或生产验收。
 
+后续独立verify已完成，见[核验报告](../../openspec/changes/formalize-cloud-foundation-baseline/verification.md)：对apply提交`b3139f1`的全部适用检查通过，12/12交付已核实；无CRITICAL/WARNING/SUGGESTION，3项规格检查为Not applicable。下文保留apply当时的记录与未验证业务范围，不代表独立verify仍未执行。本轮尚未归档或合并。
+
 ## 五项现有主规格追溯
 
 以下要求均来自[相同代码提交的cloud-identity主规格](https://github.com/TuIanL/zhiyong-swim-platform/blob/7082b729785957252ff5797a057f3151c6dd25c2/openspec/specs/cloud-identity/spec.md)，无新增/修改要求。源码链接证明实现位置；测试链接证明用例存在，运行结论另绑定具体CI或历史本地记录。不能只凭函数存在就将其记为新测试通过。
@@ -26,7 +28,7 @@
 
 本地历史记录有1条Starlette/AnyIO BlockingPortal弃用警告；历史测试通过不等于没有依赖升级风险。CI配置见[工作流](../../.github/workflows/ci.yml)，push和PR会自动运行测试；最新文档提交的CI状态以PR对应head为准，不外推旧运行。
 
-## 本变更的文档实施记录
+## 本变更的文档实施记录（apply阶段历史）
 
 用户在本次对话确认规划草案无异议，随后明确调用apply；因此本次发布[基线](../baseline/cloud-foundation.md)、[ERD](../architecture/cloud-domain-model.md)、[RBAC](../contracts/cloud-rbac.md)、[API契约](../contracts/cloud-foundation.md)及本文。用户的草案确认不等于全平台架构批准或生产可部署。
 
