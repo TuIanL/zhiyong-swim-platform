@@ -6,7 +6,7 @@
 | --- | --- |
 | 事实代码基线 | [`7082b729785957252ff5797a057f3151c6dd25c2`](https://github.com/TuIanL/zhiyong-swim-platform/commit/7082b729785957252ff5797a057f3151c6dd25c2)，2026-11-06 13:35:08 UTC |
 | 对应源码树 | `b3d9d10be242ed319e931d0d8bf0b081c4f1f8c6` |
-| 变更 | [formalize-cloud-foundation-baseline](../../openspec/changes/formalize-cloud-foundation-baseline/proposal.md)，纯文档，`skip_specs: true` |
+| 变更 | [formalize-cloud-foundation-baseline](../../openspec/changes/archive/2026-11-06-formalize-cloud-foundation-baseline/proposal.md)，纯文档，`skip_specs: true` |
 | 规划提交 | `1db39527db6b2565bcdcad0230f90eb117b7ec73`；已建立proposal/design/tasks |
 | 草案确认 | 用户已在本次对话确认草案无异议，并明确授权apply；不等于总体商业范围或生产部署获批 |
 | 当前交付 | 独立工程的本地开发切片及正式位置文档；实现验证、最终文档验收与归档状态见[本变更记录](../verification/cloud-foundation-baseline.md) |

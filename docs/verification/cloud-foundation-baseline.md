@@ -2,7 +2,7 @@
 
 记录日期：2026-11-06。事实代码基线为 `7082b729785957252ff5797a057f3151c6dd25c2`，文档变更为 `formalize-cloud-foundation-baseline`，评审入口为 [PR #1](https://github.com/TuIanL/zhiyong-swim-platform/pull/1)。本文件记录文档实施和证据核对，不追认事前审批或生产验收。
 
-后续独立verify已完成，见[核验报告](../../openspec/changes/formalize-cloud-foundation-baseline/verification.md)：对apply提交`b3139f1`的全部适用检查通过，12/12交付已核实；无CRITICAL/WARNING/SUGGESTION，3项规格检查为Not applicable。下文保留apply当时的记录与未验证业务范围，不代表独立verify仍未执行。本轮尚未归档或合并。
+后续独立verify已完成，见[核验报告](../../openspec/changes/archive/2026-11-06-formalize-cloud-foundation-baseline/verification.md)：对apply提交`b3139f1`的全部适用检查通过，12/12交付已核实；无CRITICAL/WARNING/SUGGESTION，3项规格检查为Not applicable。下文保留apply当时的记录与未验证业务范围，不代表独立verify仍未执行。该变更现已按用户明确调用的archive流程归档；归档后检查见[归档记录](../../openspec/changes/archive/2026-11-06-formalize-cloud-foundation-baseline/archive.md)，PR尚未合并。
 
 ## 五项现有主规格追溯
 
