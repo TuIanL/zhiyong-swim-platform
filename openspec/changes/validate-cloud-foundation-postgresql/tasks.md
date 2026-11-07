@@ -4,36 +4,36 @@
 
 ## 1. 专用环境、schema 与隔离身份
 
-- [ ] 1.1 实现 `scripts/test-postgresql.py` 的专用容器创建、镜像锁定（PostgreSQL 17 具体补丁标签 + 多架构 manifest list digest，运行时记录实际平台 digest/镜像 ID/`server_version`/`TimeZone`）、回环随机端口、run id 与 label 校验、`pg_isready` 有界等待和精确清理；安装终止信号处理进入清理路径，记录 SIGKILL/宿主崩溃的 run_id 恢复流程，明确禁止全局 prune；测试证明任意外部 DSN/伪造目标在连接前拒绝、业务连接变量与全部 `PG*` 变量被剔除、正常及可控失败路径只清理本次资源、清理异常显式报告。
-- [ ] 1.2 实现每例独立数据库、专用 schema `swim_cloud`、连接级 `search_path`（不在池化连接上 `SET`）、迁移/应用身份分离和最小授权 fixture；`CREATE DATABASE`/`DROP DATABASE` 使用独立管理员 autocommit 连接。实际断言应用角色属性、非表/schema owner、无迁移角色成员关系，以及普通建表、临时表、`CREATE SCHEMA`、改表、建索引、建库、建角色、`TRUNCATE`、迁移版本表写、`SET ROLE` 被拒；正常 API DML 与版本表读取可用，失败事务回滚后连接仍可用。
-- [ ] 1.3 落实三层 pytest 标记与执行选择规则（无标记共享 / `sqlite` 专属 / `postgresql` 专属），默认 `pytest` 保持 SQLite，PG 后端同时运行共享与 PG 专属用例；用入口测试证明环境不可用、零用例、必需场景 skip 或低于约定下限都会失败且不回退 SQLite；更新 README 的两种运行方式、资源边界、失败清理与 run_id 恢复说明，并按文档在专用环境执行冒烟。
+- [x] 1.1 实现 `scripts/test-postgresql.py` 的专用容器创建、镜像锁定（PostgreSQL 17 具体补丁标签 + 多架构 manifest list digest，运行时记录实际平台 digest/镜像 ID/`server_version`/`TimeZone`）、回环随机端口、run id 与 label 校验、`pg_isready` 有界等待和精确清理；安装终止信号处理进入清理路径，记录 SIGKILL/宿主崩溃的 run_id 恢复流程，明确禁止全局 prune；测试证明任意外部 DSN/伪造目标在连接前拒绝、业务连接变量与全部 `PG*` 变量被剔除、正常及可控失败路径只清理本次资源、清理异常显式报告。
+- [x] 1.2 实现每例独立数据库、专用 schema `swim_cloud`、连接级 `search_path`（不在池化连接上 `SET`）、迁移/应用身份分离和最小授权 fixture；`CREATE DATABASE`/`DROP DATABASE` 使用独立管理员 autocommit 连接。实际断言应用角色属性、非表/schema owner、无迁移角色成员关系，以及普通建表、临时表、`CREATE SCHEMA`、改表、建索引、建库、建角色、`TRUNCATE`、迁移版本表写、`SET ROLE` 被拒；正常 API DML 与版本表读取可用，失败事务回滚后连接仍可用。
+- [x] 1.3 落实三层 pytest 标记与执行选择规则（无标记共享 / `sqlite` 专属 / `postgresql` 专属），默认 `pytest` 保持 SQLite，PG 后端同时运行共享与 PG 专属用例；用入口测试证明环境不可用、零用例、必需场景 skip 或低于约定下限都会失败且不回退 SQLite；更新 README 的两种运行方式、资源边界、失败清理与 run_id 恢复说明，并按文档在专用环境执行冒烟。
 
 ## 2. 六表迁移、schema 落点与约束
 
-- [ ] 2.1 新增 PostgreSQL schema 测试，在空库执行真实 `20261106_0001`，核对版本值、版本表位于 `swim_cloud`、字段类型/空值、主键/唯一性、6 条外键（含 2 条复合外键）、3 个显式索引及模型反射一致；通过实际无效/重复写入验证两条复合外键和唯一约束，回滚后无残留。
-- [ ] 2.2 验证用户、机构、场馆和机构成员删除对应的级联且不涉及该父记录的其他机构记录保留；补 downgrade/upgrade 往返、迁移中途可控失败（预置冲突对象，不改写正式 revision）后的 DDL 与版本回滚、空库启动不建表且 `ready=503`、迁移后 `ready=200` 及 HTTP 冒烟，所有操作仅针对本次临时库。
-- [ ] 2.3 将实际六表与 schema 验证结果及每项用例位置写入 `docs/verification/cloud-foundation-postgresql.md`，对照模型/迁移/既有领域文档逐项复核；原 revision 及历史验证文件不改写，发现不兼容先如实列明，不以静态比较冒充运行通过。
+- [x] 2.1 新增 PostgreSQL schema 测试，在空库执行真实 `20261106_0001`，核对版本值、版本表位于 `swim_cloud`、字段类型/空值、主键/唯一性、6 条外键（含 2 条复合外键）、3 个显式索引及模型反射一致；通过实际无效/重复写入验证两条复合外键和唯一约束，回滚后无残留。
+- [x] 2.2 验证用户、机构、场馆和机构成员删除对应的级联且不涉及该父记录的其他机构记录保留；补 downgrade/upgrade 往返、迁移中途可控失败（预置冲突对象，不改写正式 revision）后的 DDL 与版本回滚、空库启动不建表且 `ready=503`、迁移后 `ready=200` 及 HTTP 冒烟，所有操作仅针对本次临时库。
+- [x] 2.3 将实际六表与 schema 验证结果及每项用例位置写入 `docs/verification/cloud-foundation-postgresql.md`，对照模型/迁移/既有领域文档逐项复核；原 revision 及历史验证文件不改写，发现不兼容先如实列明，不以静态比较冒充运行通过。
 
 ## 3. 角色矩阵与请求隔离
 
-- [ ] 3.1 为 17 个业务 operation 建立适用身份/资源组合清单并实现共享矩阵用例，在 SQLite 和 PG 分别验证匿名、非成员、owner/admin/coach/athlete 的合法请求、错误码、返回资源集合及越权业务写入无副作用；公开注册/登录、两项健康操作与已登录账号创建/列所属机构单独列明适用范围，登录失败按计数/锁定策略检查。
-- [ ] 3.2 补充普通角色场馆授权/撤销、成员移除、admin 降级、多机构用户错配 site ID 及 owner/admin 显式授权撤销例外；两后端实际运行确认既有会话在后续请求使用最新权限，不改变现有角色政策。
-- [ ] 3.3 以 `pool_size=1`/`max_overflow=0` 的单连接池按顺序确认物理连接复用（采集 `pg_backend_pid()`），交替 A/B 用户和匿名请求，并在 409/事务回滚后执行正常请求；断言无跨机构数据/身份残留，将场景映射、池配置边界和实际覆盖范围补入 RBAC 契约及本次验证报告。
+- [x] 3.1 为 17 个业务 operation 建立适用身份/资源组合清单并实现共享矩阵用例，在 SQLite 和 PG 分别验证匿名、非成员、owner/admin/coach/athlete 的合法请求、错误码、返回资源集合及越权业务写入无副作用；公开注册/登录、两项健康操作与已登录账号创建/列所属机构单独列明适用范围，登录失败按计数/锁定策略检查。
+- [x] 3.2 补充普通角色场馆授权/撤销、成员移除、admin 降级、多机构用户错配 site ID 及 owner/admin 显式授权撤销例外；两后端实际运行确认既有会话在后续请求使用最新权限，不改变现有角色政策。
+- [x] 3.3 以 `pool_size=1`/`max_overflow=0` 的单连接池按顺序确认物理连接复用（采集 `pg_backend_pid()`），交替 A/B 用户和匿名请求，并在 409/事务回滚后执行正常请求；断言无跨机构数据/身份残留，将场景映射、池配置边界和实际覆盖范围补入 RBAC 契约及本次验证报告。
 
 ## 4. 时间与并发事务
 
-- [ ] 4.1 用库级 `TimeZone` 默认值为 UTC 与 `Asia/Shanghai` 各建独立测试库（不使用会话级 `SET`），固定服务时钟验证时间往返、会话与锁定截止前/相等/之后，并在多次池化请求后复验 `SHOW TimeZone` 无残留；若复现 aware 时间重标风险，最小修正 `api.py` 归一化并记录先失败后通过证据；SQLite naive-UTC 回归通过且原五次/十五分钟策略、token/API 不变。
-- [ ] 4.2 以独立连接池（`pool_size=8`、`max_overflow=0`）、同步屏障与有界超时运行相同 email、slug、同机构场馆名并发写入，确认一成功一 409、无部分 owner/重复记录，失败后合法写入成功，并断言至少出现两个不同 `pg_backend_pid()` 证明真实并发；报告真实事务结果而非把超时当通过。
-- [ ] 4.3 验证五次并发错误密码登录无丢失计数且产生锁定，补持锁/释放证据（独立连接与事件同步）；把时间/并发用例、池配置差异、环境和限制写入本次验证报告，区分正确性验证与未开展的压测/其他权限竞态。
+- [x] 4.1 用库级 `TimeZone` 默认值为 UTC 与 `Asia/Shanghai` 各建独立测试库（不使用会话级 `SET`），固定服务时钟验证时间往返、会话与锁定截止前/相等/之后，并在多次池化请求后复验 `SHOW TimeZone` 无残留；若复现 aware 时间重标风险，最小修正 `api.py` 归一化并记录先失败后通过证据；SQLite naive-UTC 回归通过且原五次/十五分钟策略、token/API 不变。
+- [x] 4.2 以独立连接池（`pool_size=8`、`max_overflow=0`）、同步屏障与有界超时运行相同 email、slug、同机构场馆名并发写入，确认一成功一 409、无部分 owner/重复记录，失败后合法写入成功，并断言至少出现两个不同 `pg_backend_pid()` 证明真实并发；报告真实事务结果而非把超时当通过。
+- [x] 4.3 验证五次并发错误密码登录无丢失计数且产生锁定，补持锁/释放证据（独立连接与事件同步）；把时间/并发用例、池配置差异、环境和限制写入本次验证报告，区分正确性验证与未开展的压测/其他权限竞态。
 
 ## 5. CI 与 RLS 边界记录
 
 - [ ] 5.1 新增 PG CI job 复用专用入口并保留 SQLite job，确认共享 API 用例与 PG 专属用例都实际执行；实现 `pg_isready` 有界等待、失败时清理前的脱敏实例日志收集、always 精确清理、脱敏 JUnit/运行摘要/环境证据上传；必需场景零收集、被 skip、共享用例未执行或环境失败必须使 job 失败；通过当前实现 head 的 CI 确认两后端实际执行及两平台架构记录。
-- [ ] 5.2 发布 `docs/decisions/0002-postgresql-validation-and-rls-boundary.md`，记录测试镜像与平台、schema/`search_path` 与权限边界、RLS 后续表/操作、全局身份、可信上下文、连接复用、缺失上下文、owner/BYPASSRLS 门槛；复核未创建 policy 或声称直接 SQL 具有行级隔离，未将草案标成生产架构批准。
+- [x] 5.2 发布 `docs/decisions/0002-postgresql-validation-and-rls-boundary.md`，记录测试镜像与平台、schema/`search_path` 与权限边界、RLS 后续表/操作、全局身份、可信上下文、连接复用、缺失上下文、owner/BYPASSRLS 门槛；复核未创建 policy 或声称直接 SQL 具有行级隔离，未将草案标成生产架构批准。
 
 ## 6. 集成交付与跨系统同步
 
-- [ ] 6.1 汇总本次规格 18 个场景到测试、实际结果和提交的追溯，完成 SQLite/PG 集成结果、OpenSpec change 与主规格 strict、链接和 Git 改动范围检查；报告区分本机/CI、历史/当前及 RLS/生产等未验证范围，不以 strict 代替实现核验。
+- [x] 6.1 汇总本次规格 18 个场景到测试、实际结果和提交的追溯，完成 SQLite/PG 集成结果、OpenSpec change 与主规格 strict、链接和 Git 改动范围检查；报告区分本机/CI、历史/当前及 RLS/生产等未验证范围，不以 strict 代替实现核验。
 - [ ] 6.2 在同一分支/PR 提交实现与证据，更新 Notion 四项既有任务的 PostgreSQL 子范围、文档链接和真实阶段，确认未将总体任务标为完成、未继承 PR #1 批准；交付可供后续独立 verify 的材料和最新 head CI 链接。
 
 ## Workflow follow-up
