@@ -175,7 +175,20 @@ PR #2继续保持草稿，未执行独立verify、主规格同步/archive或合�
 
 ### 9.3 最新提交与CI
 
-代码、测试、设计/增量和本报告在同一PR #2提交。任务1.1、1.2以本轮本机证据恢复完成；5.1目前等待修复head的CI。最终head SHA、对应工作流、两个job结果及真实清理状态将在此节补齐，不能使用174a618的旧CI充当修复通过。
+修复提交为 `cd84d439de3de828b837ccbffab90f017263d4df`，代码、测试、设计/规格增量及本报告均在现有Draft PR #2发布。[对应PR CI 42327171420](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42327171420)已completed/success；两个job与清理/上传均success。checkout日志为临时合并引用63d6efb（修复head与main4968750组合），不是实际合并。
+
+| CI证据 | 实际值 |
+| --- | --- |
+| SQLite job 128265022782 | 80 passed / 39 PG专属skipped |
+| PostgreSQL job 128265022953 | 118 passed / 1 SQLite专属skipped，0 failures/errors |
+| 实例及平台 | run id `3257a4068f7034d1`；linux/amd64，PG17.11、默认Etc/UTC，与本机arm64同一镜像锁 |
+| 主入口最终摘要 | result=passed、cleanup=removed、pytest_exit_code=0、exit_code=0 |
+| CI cleanup-run-file实际输出 | status=absent、cleanup=absent、result=passed、exit_code=0；inspect已明确确认目标不存在 |
+| 原始证据 | [CI证据包](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42327171420/artifacts/13554899688)，摘要/JUnit已下载读取，副本在var/ci-evidence/42327171420/（忽略、不提交） |
+
+任务1.1、1.2及5.1已在本轮代码、完整本机测试与真实CI证据均成立后恢复完成，CLI为16/16。OpenSpec change strict与主规格strict均通过，全工程65处相对链接、47处GitHub blob目标及19处Notion链接ID检查通过（GitHub目标按本地对应提交/分支对象核对）；本轮没有改主规格、迁移、产品代码或依赖。
+
+本节随后随证据收口提交发布；该提交只记录已取得的结果与任务状态。最终head完整SHA及其**新一轮**CI链接统一在[PR #2交付描述](https://github.com/TuIanL/zhiyong-swim-platform/pull/2)与[Notion当前阶段](https://www.notion.so/410f602574aa81288834cc297ae5b039)绑定，报告所在提交可由Git历史唯一追溯；不把修复前174a618或代码提交cd84d43的CI充当最终head的新检查。
 
 ### 9.4 保留边界
 
