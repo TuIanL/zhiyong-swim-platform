@@ -50,6 +50,7 @@ OWNER_VALUE = "zhiyong-swim-platform"
 
 RUN_ID_PATTERN = re.compile(r"^[0-9a-f]{16}\Z")
 CONTAINER_PATTERN = re.compile(r"^swim-pg-test-[0-9a-f]{16}\Z")
+CONTAINER_ID_PATTERN = re.compile(r"^[0-9a-f]{64}\Z")
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 # 必须落到具体补丁版本（如 17.11）；裸 17 或 latest 都不接受。
 TAG_PATTERN = re.compile(r"^17\.\d+(?:\.\d+)?(?:-[a-z0-9.]+)?\Z")
@@ -66,6 +67,7 @@ STRIPPED_ENV_PREFIXES = ("PG",)
 # 允许 pytest 至少收集到的 PostgreSQL 必需场景数（全部非 sqlite 用例）。
 # 当前实际为 86；下限用于发现“零收集/大批用例被跳过”这类静默退化。
 MINIMUM_PG_SCENARIOS = 80
+CLEANUP_CONFIRM_SECONDS = 5.0
 
 
 class HarnessError(RuntimeError):
@@ -218,10 +220,16 @@ class Docker:
     def inspect(self, name: str) -> dict:
         result = self._run("inspect", name, check=False)
         if result.returncode != 0:
-            raise LookupError(name)
-        payload = json.loads(result.stdout)
-        if not payload:
-            raise LookupError(name)
+            # 只有明确的对象不存在才可证明 absent；daemon/权限错误不能当作清理成功。
+            if result.stderr.strip().casefold() == f"Error: No such object: {name}".casefold():
+                raise LookupError(name)
+            raise HarnessError(f"docker inspect 失败（退出码 {result.returncode}）：{result.stderr.strip()}")
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise HarnessError("docker inspect 未返回合法 JSON") from error
+        if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+            raise HarnessError("docker inspect 未返回唯一对象，无法确认容器身份")
         return payload[0]
 
     def run_container(self, *, name: str, run_id: str, reference: str, admin_password: str) -> str:
@@ -278,7 +286,13 @@ def resolve_docker() -> Docker:
 
 def resolve_host_port(docker: Docker, resources: RunResources) -> dict:
     """连接前核验容器归属：ID、run id label、回环绑定与目标端口。"""
+    if resources.container != container_name(resources.run_id):
+        raise HarnessError("容器名与 run id 不一致")
+    if not CONTAINER_ID_PATTERN.fullmatch(resources.container_id or ""):
+        raise HarnessError("缺少完整容器 ID，拒绝连接")
     info = docker.inspect(resources.container)
+    if info.get("Name") != "/" + resources.container:
+        raise HarnessError("实际容器名与本次运行不一致")
     labels = (info.get("Config") or {}).get("Labels") or {}
     if labels.get(LABEL_RUN) != resources.run_id:
         raise HarnessError("容器 run id label 与本次运行不匹配，拒绝连接")
@@ -348,6 +362,8 @@ def cleanup_container(docker: Docker, name: str, run_id: str) -> str:
         info = docker.inspect(name)
     except LookupError:
         return "absent"
+    except HarnessError as error:
+        return f"error:{error}"
     labels = (info.get("Config") or {}).get("Labels") or {}
     if labels.get(LABEL_RUN) != run_id:
         return "refused:label-mismatch"
@@ -358,12 +374,14 @@ def cleanup_container(docker: Docker, name: str, run_id: str) -> str:
     except HarnessError as error:
         return f"error:{error}"
     # 删除后短暂重试确认，避免把 Docker 的瞬时视图当成残留。
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + CLEANUP_CONFIRM_SECONDS
     while time.monotonic() < deadline:
         try:
             docker.inspect(name)
         except LookupError:
             return "removed"
+        except HarnessError as error:
+            return f"error:deletion-unconfirmed:{error}"
         time.sleep(0.2)
     return "removed:unverified"
 
@@ -371,7 +389,7 @@ def cleanup_container(docker: Docker, name: str, run_id: str) -> str:
 def cleanup_from_run_file(docker: Docker, path: Path) -> tuple[int, dict]:
     """CI 的 always 兜底清理：只按记录在案的 run id 精确删除。"""
     if not path.is_file():
-        return 0, {"status": "no-run-file", "path": str(path)}
+        return 3, {"status": "error:no-run-file", "result": "failed", "exit_code": 3}
     payload = json.loads(path.read_text(encoding="utf-8"))
     run_id = str(payload.get("run_id", ""))
     name = str(payload.get("container", ""))
@@ -380,17 +398,22 @@ def cleanup_from_run_file(docker: Docker, path: Path) -> tuple[int, dict]:
     if name != container_name(run_id):
         raise HarnessError("运行记录中的容器名与 run id 不一致，拒绝清理")
     status = cleanup_container(docker, name, run_id)
-    return 0, {"status": status, "container": name, "run_id": run_id}
+    code = 0 if status in {"removed", "absent"} else 3
+    return code, {"status": status, "cleanup": status, "result": "passed" if code == 0 else "failed",
+                  "exit_code": code, "container": name, "run_id": run_id}
 
 
 def pytest_environment(
-    *, run_id: str, host: str, port: int, admin_password: str, passwords: Mapping[str, str]
+    *, run_id: str, container_id: str, host: str, port: int, admin_password: str, passwords: Mapping[str, str]
 ) -> dict[str, str]:
     """传给 pytest 子进程的环境；不含任何可指向外部数据库的地址。"""
     environment = sanitized_environment(os.environ)
     environment.update(
         {
             "SWIM_CLOUD_PG_HARNESS_RUN": run_id,
+            "SWIM_CLOUD_PG_CONTAINER_ID": container_id,
+            "SWIM_CLOUD_PG_CONTAINER_NAME": container_name(run_id),
+            "SWIM_CLOUD_PG_OWNER": OWNER_VALUE,
             "SWIM_CLOUD_PG_HOST": host,
             "SWIM_CLOUD_PG_PORT": str(port),
             "SWIM_CLOUD_PG_ADMIN_USER": ADMIN_USER,
@@ -533,6 +556,7 @@ def execute(args: argparse.Namespace) -> int:
         }
         environment = pytest_environment(
             run_id=resources.run_id,
+            container_id=resources.container_id,
             host="127.0.0.1",
             port=resources.host_port,
             admin_password=admin_password,
@@ -560,11 +584,11 @@ def execute(args: argparse.Namespace) -> int:
         cleanup_status = cleanup_container(docker, resources.container, resources.run_id)
         summary["cleanup"] = cleanup_status
         summary["finished_at"] = datetime.now(UTC).isoformat()
+        if cleanup_status not in {"removed", "absent"}:
+            exit_code = exit_code or 3
+        summary["exit_code"] = exit_code
         summary["result"] = "passed" if exit_code == 0 and cleanup_status in {"removed", "absent"} else "failed"
         write_json(Path(args.summary), summary)
-        if cleanup_status.startswith(("refused", "removed:unverified")):
-            # 清理异常必须显式暴露，不能用测试通过掩盖残留。
-            exit_code = exit_code or 3
     print(json.dumps({k: summary[k] for k in ("run_id", "result", "cleanup")}, ensure_ascii=False))
     return exit_code
 
@@ -597,7 +621,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return execute(build_parser().parse_args(argv))
+    try:
+        return execute(build_parser().parse_args(argv))
+    except HarnessError as error:
+        print(json.dumps({"result": "failed", "harness_error": str(error), "exit_code": 2}, ensure_ascii=False))
+        return 2
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@
 
 #### Scenario: PostgreSQL target is not owned by this run
 - **WHEN** 测试入口收到任意外部连接地址、缺少本次编排创建的实例标识，或实例的归属校验（容器标识、运行标识、回环端口）不一致
-- **THEN** 入口 MUST 在数据库连接或迁移前拒绝执行，不回退到业务库，也不因数据库名带测试前缀而放行
+- **THEN** 编排入口与 PostgreSQL 测试环境初始化 MUST 各自在数据库连接或迁移前拒绝执行；即使环境变量格式完整合法，初始化仍 MUST 核验 Docker 实际容器 ID、名称、运行/owner 标签及 5432/tcp 回环端口映射，不回退到业务库，也不因数据库名带测试前缀而放行
 
 #### Scenario: Restricted application identity
 - **WHEN** PostgreSQL API 测试连接数据库并执行正常业务及权限探测
@@ -19,7 +19,7 @@
 
 #### Scenario: Failure during test execution
 - **WHEN** PostgreSQL 环境初始化、连接、迁移或测试失败，或运行收到可捕获的终止信号
-- **THEN** 测试入口 MUST 返回失败并只清理本次实例与数据，清理结果 MUST 显式报告；清理失败 MUST 使验证判定为未通过；对无法捕获的强制终止，文档 MUST 提供按运行标识逐步确认后清理的恢复流程，且 MUST NOT 建议或执行全局容器清理
+- **THEN** 测试入口 MUST 返回失败并只清理本次实例与数据，清理结果 MUST 显式报告；主入口及 CI 清理入口仅在确认 removed 或 absent 时允许清理成功，其他状态 MUST 传播非零退出码且摘要 result/cleanup/exit_code MUST 一致；Docker daemon/权限错误 MUST NOT 当作 absent；对无法捕获的强制终止，文档 MUST 提供按运行标识逐步确认后清理的恢复流程，且 MUST NOT 建议或执行全局容器清理
 
 ## ADDED Requirements
 

@@ -43,7 +43,7 @@ python scripts/test-postgresql.py
 | 数据库身份 | `swim_admin`（管理员，仅建库/建 schema/授权/销毁）、`swim_migrator`（schema owner，执行迁移）、`swim_app`（非特权应用身份） |
 | 运行记录 | run id `00bc4d4411ebb1d2`，`cleanup=removed`，`result=passed` |
 
-## 3. 实际运行结果
+## 3. 首轮apply历史运行结果（P1修复前）
 
 | 后端 | 结果 | 说明 |
 | --- | --- | --- |
@@ -135,10 +135,48 @@ E  assert 401 == 200        # 恰好到期的锁被判为仍生效
 - 本机 pytest 的临时目录固定放在 `var/pytest-pg/<run id>/`（已被 `.gitignore` 覆盖），不使用系统临时目录。
 
 
-## 8. apply接续收口与下一阶段
+## 8. 首轮apply接续收口历史（head174a618）
 
 2026-11-07，用户明确要求接续既有apply并允许提交发布到同一PR #2。本轮以交接的14/16为起点，补取第3.1节当前实现head的CI原始证据，完成5.1；四项既有Notion任务的PostgreSQL子范围、摘要、状态及文档回链已同步，PR标题与描述已从propose更新到实际实现，完成6.2。CLI任务16/16，后续收口提交仅包含本报告和任务勾选，不改实现。
 
 [Notion当前阶段](https://www.notion.so/410f602574aa81288834cc297ae5b039)统一维护最终提交及其CI入口；[云端基础](https://www.notion.so/410f602574aa81c8bfa0e4728a58b737)、[隔离测试基线](https://www.notion.so/410f602574aa81e8a757def927b364df)保持待验收；[数据模型](https://www.notion.so/410f602574aa811bbad3c6e452a065b6)、[RBAC](https://www.notion.so/410f602574aa816e87dcd70f56c4100e)仍为进行中，均保留更广未完成范围。没有把本change的实施完成当作总体项目完成。
 
 PR #2继续保持草稿，未执行独立verify、主规格同步/archive或合并；下一步等待用户单独授权verify。原未跟踪工作流模板保留原状，旧工程和历史数据未修改。
+
+
+## 9. 独立技术审阅后的P1定向修复
+
+2026-11-07，项目负责人认可head174a618的核心PostgreSQL结果，同时指出清理失败退出码传播和测试环境归属核验两项P1。本节取代上文首轮16/16作为本轮状态依据；不将首轮CI绿灯外推到修复版本。
+
+### 9.1 修改与要求复核
+
+| 要求/问题 | 定向修复 | 本轮验收证据 |
+| --- | --- | --- |
+| Isolated database validation / P1-2 | 编排入口传递完整container ID、name、run id、owner；PgEnvironment.from_environment在conftest配置阶段通过真实Docker inspect再次核验ID/名称/标签/运行状态/5432回环映射和环境端口，校验通过的对象存入pytest stash再交fixture | 格式完整但无对应容器、daemon不可用、ID/名称/run/owner/端口/回环/运行状态不符均在psycopg连接前拒绝；连接spy断言0次 |
+| Isolated database validation / P1-1 | Docker.inspect只把明确指向该对象的No such object（大小写兼容）判为不存在；其他错误及畸形输出抛HarnessError | daemon/权限错误、错误对象、空数组/畸形JSON分别测试；不会以捕获异常默认absent |
+| Reproducible PostgreSQL validation evidence / P1-1 | 主入口与cleanup-run-file仅接受removed或确认absent；error/refused/removed:unverified及缺少run-file返回非零；摘要先确定最终exit_code，再计算result | rm失败、inspect daemon错误、标签不符、删除未确认、删除后daemon失联5类异常，主入口返回值和真实CLI子进程均断言非零；摘要exit_code/result/cleanup一致 |
+
+对应测试均在 `services/cloud/tests/test_pg_harness_guard.py`：`test_cleanup_failure_propagates_nonzero_and_consistent_summary`、`test_ci_cleanup_command_exits_nonzero_on_failure`、`test_environment_rejects_forged_target_before_database_connection`、`test_pytest_initialization_rejects_complete_environment_without_container`及inspect/rm精确错误分类用例。其余既有PostgreSQL迁移、权限、角色、时区及事务测试完整运行。
+
+### 9.2 本机完整重跑（本轮真实执行）
+
+命令：`.venv/bin/python -m pytest --junitxml=var/p1-sqlite-junit.xml`；`.venv/bin/python scripts/test-postgresql.py`。不是仅执行新增用例。
+
+| 后端 | 最终结果 | 证据 |
+| --- | --- | --- |
+| SQLite | 80 passed / 39 skipped / 0 failures/errors | `var/p1-sqlite.log`、`var/p1-sqlite-junit.xml`；39项均为PG专属 |
+| PostgreSQL | 118 passed / 1 skipped / 0 failures/errors | `var/p1-postgresql.log`、`var/postgresql-junit.xml`；仅SQLite专属截止时间用例跳过 |
+| 真实清理与退出 | result=passed / cleanup=removed / pytest_exit_code=0 / exit_code=0 | run id `01ef97a491cddb93`，主进程实际退出0；按项目label查询容器列表为空 |
+| 平台/数据库 | 本机macOS，容器linux/arm64；PG17.11，默认Etc/UTC | 仍使用第2节锁定镜像及驱动；真实pytest初始化已通过Docker归属核验 |
+
+新增32个测试参数场景，均作为两后端共享安全边界测试执行；总计119项（79共享、39 PG专属、1 SQLite专属）。两后端各有一项既有Starlette/AnyIO弃用警告，不属于失败或跳过必需场景。
+
+中间一轮PG业务测试112通过，但本机Docker返回小写 `error: no such object`，严格匹配将删除确认判为错误；主进程正确退出3且result=failed。随后只对明确的No such object消息做大小写兼容并补回归，再完成上表全量重跑；该中间失败不冒充最终通过。
+
+### 9.3 最新提交与CI
+
+代码、测试、设计/增量和本报告在同一PR #2提交。任务1.1、1.2以本轮本机证据恢复完成；5.1目前等待修复head的CI。最终head SHA、对应工作流、两个job结果及真实清理状态将在此节补齐，不能使用174a618的旧CI充当修复通过。
+
+### 9.4 保留边界
+
+真实容器归属由可信本机Docker daemon的inspect结果证明，不能抵御具有Docker管理权限的恶意操作者在核验后篡改容器/映射；环境变量本身不再作为信任凭据。无run-file时无法确认清理目标，因此CI清理入口失败。既有RLS、生产部署、性能及更广并发限制继续有效。本轮只修复两个P1，等待项目负责人第二轮审阅；不执行Archive或Merge，main保持4968750，PR保持Draft。

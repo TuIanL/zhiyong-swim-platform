@@ -33,6 +33,8 @@ Notion 的[云端模型页](https://www.notion.so/410f602574aa8170b565f7fc4c5eab
 
 **目标拒绝。** 入口不提供任何数据库地址参数；忽略业务 `SWIM_CLOUD_DATABASE_URL`，并在构造 pytest 子进程环境时剔除该变量与全部 `PG*` 变量（含 `PGSERVICE`、`PGPASSFILE`、`PGOPTIONS`），避免本机既有 libpq 配置把连接导向其他数据库。连接前用 container ID、run id label、owner label、回环绑定与目标端口交叉核验；数据库名带 `test` 前缀不构成安全凭据。凭据随机生成，不进命令行日志、JUnit、摘要或 Git。
 
+P1复审修正：pytest子进程额外接收完整container ID、name及owner，并在conftest配置阶段调用PgEnvironment.from_environment，通过真实Docker inspect重复使用上述归属规则，比较环境端口与实际5432/tcp回环映射。校验完成前不得连接psycopg或创建测试库，已校验对象通过pytest stash交给fixture；格式合法的环境变量本身不构成证明。该保护依赖可信本机Docker daemon，不承诺抵御有Docker管理权限的恶意操作者在校验后替换运行环境。
+
 **执行选择规则。** 三层标记与运行矩阵：
 
 | 用例类别 | 标记 | 默认 `pytest` | `--cloud-backend=postgresql` |
@@ -147,6 +149,8 @@ Notion 的[云端模型页](https://www.notion.so/410f602574aa8170b565f7fc4c5eab
 - **失败即红**：PG 必需场景零收集、被 skip、共享 API 用例未执行或环境失败，都必须使 job 失败。
 
 CI job 成功不自动修改仓库保护规则，也不等于用户批准本 PR。
+
+P1复审修正：Docker.inspect仅将精确指向所查对象的“No such object”错误（大小写兼容）判为不存在；daemon、权限、畸形响应均为编排错误。主入口及cleanup-run-file共享清理成功白名单removed/已确认absent；error、refused、removed:unverified及缺少run-file均返回非零。摘要记录最终exit_code，result在清理完成后计算；不得先写failed再返回0。回归同时覆盖main返回值与实际CLI子进程退出码。
 
 本提案建议先完成 PG 兼容验证，RLS 后续单独提案；该范围选择在 apply 中沿用。RLS 待评审候选为 tenants 及三个租户归属表；users/auth_sessions 是全局身份路径，不能直接强塞单 tenant 过滤。未来必须解决创建机构、机构列表、多机构成员、可信 tenant/user 上下文来源、各操作 USING/WITH CHECK、缺失上下文拒绝、事务局部设置和池复用、表 owner/FORCE RLS 及 BYPASSRLS 绕过，并用真实非特权角色负向验证。官方说明表 owner 通常可绕过 RLS，超级用户及 BYPASSRLS 角色始终可绕过，见[PostgreSQL RLS 文档](https://www.postgresql.org/docs/17/ddl-rowsecurity.html)。
 

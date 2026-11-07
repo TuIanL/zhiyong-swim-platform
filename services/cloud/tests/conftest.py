@@ -21,6 +21,7 @@ from swimplatform.security import password_hash, token_hash
 
 PASSWORD = "Swimming-Platform-2026!"
 BACKENDS = ("sqlite", "postgresql")
+PG_ENVIRONMENT = pytest.StashKey[object]()
 
 # 供矩阵用例直接写入账号的密码摘要：只在导入时计算一次，避免每例重复 scrypt。
 SEEDED_PASSWORD_HASH = password_hash(PASSWORD)
@@ -54,7 +55,8 @@ def pytest_configure(config):
         # 环境不完整时必须整体失败，不能静默跳过或回退 SQLite。
         from pg_support import PgEnvironment
 
-        PgEnvironment.from_environment()
+        # 在收集用例、创建数据库或连接 psycopg 之前验证真实 Docker 归属。
+        config.stash[PG_ENVIRONMENT] = PgEnvironment.from_environment()
 
 
 # PostgreSQL 后端下记录“必需场景”（全部非 sqlite 用例）及其最终结果。
@@ -122,12 +124,10 @@ def cloud_backend(request):
 
 
 @pytest.fixture(scope="session")
-def pg_environment(cloud_backend):
+def pg_environment(cloud_backend, pytestconfig):
     if cloud_backend != "postgresql":
         pytest.skip("需要 --cloud-backend=postgresql")
-    from pg_support import PgEnvironment
-
-    return PgEnvironment.from_environment()
+    return pytestconfig.stash[PG_ENVIRONMENT]
 
 
 @pytest.fixture

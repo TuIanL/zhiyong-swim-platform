@@ -12,11 +12,14 @@
 from __future__ import annotations
 
 import os
+import importlib.util
+import sys
 import re
 import secrets
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterator
 from uuid import uuid4
 
@@ -46,6 +49,9 @@ ENV_KEYS = {
     "run": "SWIM_CLOUD_PG_HARNESS_RUN",
     "host": "SWIM_CLOUD_PG_HOST",
     "port": "SWIM_CLOUD_PG_PORT",
+    "container_id": "SWIM_CLOUD_PG_CONTAINER_ID",
+    "container_name": "SWIM_CLOUD_PG_CONTAINER_NAME",
+    "owner": "SWIM_CLOUD_PG_OWNER",
     "admin_user": "SWIM_CLOUD_PG_ADMIN_USER",
     "admin_password": "SWIM_CLOUD_PG_ADMIN_PASSWORD",
     "migration_user": "SWIM_CLOUD_PG_MIGRATION_USER",
@@ -57,6 +63,18 @@ ENV_KEYS = {
 
 class PostgresEnvironmentError(RuntimeError):
     """显式请求 PostgreSQL 但环境不完整；必须失败，不能回退 SQLite。"""
+
+
+def harness_module():
+    """测试初始化复用编排入口的真实 Docker 身份校验，避免两份规则漂移。"""
+    name = "_swim_pg_harness"
+    if name not in sys.modules:
+        path = Path(__file__).resolve().parents[3] / "scripts/test-postgresql.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
 
 
 def _required(environment: dict[str, str], key: str) -> str:
@@ -96,6 +114,9 @@ class PgEnvironment:
     migration_password: str
     app_user: str
     app_password: str
+    container_id: str
+    container_name: str
+    owner: str
 
     @classmethod
     def from_environment(cls, environment: dict[str, str] | None = None) -> "PgEnvironment":
@@ -120,7 +141,7 @@ class PgEnvironment:
         app_user = _required(source, ENV_KEYS["app_user"])
         if len({admin_user, migration_user, app_user}) != 3:
             raise PostgresEnvironmentError("管理员、迁移与应用身份必须互不相同")
-        return cls(
+        result = cls(
             host=host,
             port=port,
             run_id=run_id,
@@ -130,7 +151,24 @@ class PgEnvironment:
             migration_password=_required(source, ENV_KEYS["migration_password"]),
             app_user=app_user,
             app_password=_required(source, ENV_KEYS["app_password"]),
+            container_id=_required(source, ENV_KEYS["container_id"]),
+            container_name=_required(source, ENV_KEYS["container_name"]),
+            owner=_required(source, ENV_KEYS["owner"]),
         )
+        result.verify_container()
+        return result
+
+    def verify_container(self) -> None:
+        harness = harness_module()
+        try:
+            if self.owner != harness.OWNER_VALUE or self.host != "127.0.0.1":
+                raise harness.HarnessError("环境中的 owner 或 host 与专用容器不一致")
+            resources = harness.RunResources(self.run_id, self.container_name, self.container_id)
+            harness.resolve_host_port(harness.resolve_docker(), resources)
+            if resources.host_port != self.port:
+                raise harness.HarnessError("环境端口与容器 5432/tcp 实际映射不一致")
+        except (harness.HarnessError, LookupError) as error:
+            raise PostgresEnvironmentError(f"专用容器归属核验失败，拒绝数据库连接：{error}") from error
 
     # ---- 连接 ----------------------------------------------------------
 
