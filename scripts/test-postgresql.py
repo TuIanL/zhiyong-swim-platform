@@ -460,7 +460,7 @@ def _install_signal_handlers() -> None:
 def run_pytest(environment: dict[str, str], junit: Path, basetemp: Path, extra: Sequence[str]) -> int:
     junit.parent.mkdir(parents=True, exist_ok=True)
     basetemp.parent.mkdir(parents=True, exist_ok=True)
-    # 用 --dev-select 只做本机迭代时，不施加“必需场景下限”，该次运行也不构成证据。
+    # --dev-select 不施加总数下限且不构成完整证据；仍要求包含共享与PG两类。
     minimum = 0 if extra else MINIMUM_PG_SCENARIOS
     command = [
         sys.executable, "-m", "pytest",

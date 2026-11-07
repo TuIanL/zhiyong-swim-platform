@@ -193,3 +193,17 @@ PR #2继续保持草稿，未执行独立verify、主规格同步/archive或合�
 ### 9.4 保留边界
 
 真实容器归属由可信本机Docker daemon的inspect结果证明，不能抵御具有Docker管理权限的恶意操作者在核验后篡改容器/映射；环境变量本身不再作为信任凭据。无run-file时无法确认清理目标，因此CI清理入口失败。既有RLS、生产部署、性能及更广并发限制继续有效。本轮只修复两个P1，等待项目负责人第二轮审阅；不执行Archive或Merge，main保持4968750，PR保持Draft。
+
+
+## 10. W1/W2/S1修复（归档前复核）
+
+2026-11-07，用户要求先补齐W1、W2与S1再归档，S2留后续改进；没有修改业务权限策略、PostgreSQL架构或扩大Change业务范围。
+
+- W1：新增18个合法目标下的拒绝写入身份组合（成员PATCH/DELETE、场馆授予/撤销），在SQLite/PG均比较六张业务表请求前后状态；owner/admin分别验证自身显式授权被撤销后仍可访问/管理本机构；管理角色新增授权从允许201/409改为严格201，再单独验证重复409。
+- W2：三类唯一写入各自在目标INSERT执行前以屏障同时持有两个连接，逐例断言两个不同backend PID，继续断言201/409、单记录和机构owner原子性。
+- S1：类别台账显式要求shared及postgresql同时存在，仍逐节点检查实际通过状态与总数下限；新增12个回归，缺任一类别即使总数80也失败。
+- S2：按用户决策保留为后续改进；当前image ID/RepoDigests与index digest的限制保持如实记录，不当作本轮未完成业务或架构变更。
+
+本轮真实完整执行：SQLite112 passed/39 PG专属skipped；PG150 passed/1 SQLite专属skipped（共151项），failures/errors=0。新增32个共享参数场景（18拒绝组合+2管理例外+12类别回归），当前111共享+39 PG专属+1 SQLite专属。PG run id f7a0acdd513e7ff1，result=passed/cleanup=removed/pytest_exit_code=0/exit_code=0；arm64、PG17.11及同一镜像锁。命令和日志分别为var/warnings-sqlite.log、warnings-sqlite-junit.xml、warnings-postgresql.log及postgresql-junit.xml/validation-summary.json，均忽略不提交。
+
+修复提交及其CI在下一个证据收口记录绑定；不能用1736b40或0c27b14的旧CI冒充本次测试通过。最终复核结论见本change verification.md末尾；归档前仍按技能完成规格同步选择、同步后校验和真实归档记录。

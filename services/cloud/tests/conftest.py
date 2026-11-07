@@ -61,17 +61,20 @@ def pytest_configure(config):
 
 # PostgreSQL 后端下记录“必需场景”（全部非 sqlite 用例）及其最终结果。
 PG_LEDGER = pytest.StashKey[dict]()
+PG_CATEGORIES = pytest.StashKey[dict]()
 
 
 def pytest_collection_modifyitems(config, items):
     if config.getoption("--cloud-backend") == "postgresql":
         ledger = config.stash.setdefault(PG_LEDGER, {})
+        categories = config.stash.setdefault(PG_CATEGORIES, {})
         skip = pytest.mark.skip(reason="SQLite 专属用例不在 PostgreSQL 后端运行")
         for item in items:
             if item.get_closest_marker("sqlite"):
                 item.add_marker(skip)
             else:
                 ledger[item.nodeid] = "collected"
+                categories[item.nodeid] = "postgresql" if item.get_closest_marker("postgresql") else "shared"
         return
     skip = pytest.mark.skip(reason="需要 --cloud-backend=postgresql 与专用可销毁实例")
     for item in items:
@@ -101,6 +104,15 @@ def pytest_sessionfinish(session, exitstatus):
     ledger = session.config.stash.get(PG_LEDGER, {}) or {}
     minimum = session.config.getoption("--cloud-pg-minimum-scenarios")
     problems = []
+    categories = session.config.stash.get(PG_CATEGORIES, {})
+    counts = {category: sum(categories.get(nodeid) == category for nodeid in ledger)
+              for category in ("shared", "postgresql")}
+    for category in ("shared", "postgresql"):
+        if not counts[category]:
+            problems.append(f"未实际收集到 {category} 类必需场景")
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter:
+        reporter.write_line(f"PostgreSQL categories: shared={counts['shared']}, postgresql={counts['postgresql']}")
     if not ledger:
         problems.append("未收集到任何 PostgreSQL 必需场景")
     elif minimum and len(ledger) < minimum:

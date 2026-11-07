@@ -5,6 +5,7 @@
 """
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,15 +36,35 @@ def record_backend_pids(engine) -> list[int]:
     return pids
 
 
+@contextmanager
+def distinct_write_connections(engine, table):
+    """在目标INSERT执行前会合：双方同时持有连接，并逐例证明不同后端PID。"""
+    barrier = threading.Barrier(2)
+    pids = []
+
+    def gate(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().lower().startswith(f"insert into {table} "):
+            pids.append(connection.connection.driver_connection.info.backend_pid)
+            barrier.wait(timeout=10)
+
+    event.listen(engine, "before_cursor_execute", gate)
+    try:
+        yield
+        assert len(pids) == 2 and len(set(pids)) == 2, pids
+    finally:
+        event.remove(engine, "before_cursor_execute", gate)
+
+
 def test_concurrent_tenant_slug_writes_leave_one_record(concurrency_app):
     with TestClient(concurrency_app) as client:
         token = register(client)
     headers = {"Authorization": f"Bearer {token}"}
 
-    responses = run_concurrently(
-        concurrency_app,
-        [lambda client: client.post("/api/v1/tenants", headers=headers, json={"name": "team-a", "slug": "team-a"})] * 2,
-    )
+    with distinct_write_connections(concurrency_app.state.engine, "tenants"):
+        responses = run_concurrently(
+            concurrency_app,
+            [lambda client: client.post("/api/v1/tenants", headers=headers, json={"name": "team-a", "slug": "team-a"})] * 2,
+        )
     codes = sorted(response.status_code for response in responses)
     assert codes == [201, 409], codes
 
@@ -66,10 +87,11 @@ def test_concurrent_tenant_slug_writes_leave_one_record(concurrency_app):
 
 def test_concurrent_registration_same_email(concurrency_app):
     body = {"email": "dup@example.test", "password": PASSWORD, "display_name": "Dup"}
-    responses = run_concurrently(
-        concurrency_app,
-        [lambda client: client.post("/api/v1/auth/register", json=body)] * 2,
-    )
+    with distinct_write_connections(concurrency_app.state.engine, "users"):
+        responses = run_concurrently(
+            concurrency_app,
+            [lambda client: client.post("/api/v1/auth/register", json=body)] * 2,
+        )
     assert sorted(response.status_code for response in responses) == [201, 409]
 
     engine = concurrency_app.state.engine
@@ -88,10 +110,11 @@ def test_concurrent_site_name_writes_leave_one_record(concurrency_app):
         ).json()
 
     path = f"/api/v1/tenants/{tenant['id']}/sites"
-    responses = run_concurrently(
-        concurrency_app,
-        [lambda client: client.post(path, headers=headers, json={"name": "第一训练馆"})] * 2,
-    )
+    with distinct_write_connections(concurrency_app.state.engine, "sites"):
+        responses = run_concurrently(
+            concurrency_app,
+            [lambda client: client.post(path, headers=headers, json={"name": "第一训练馆"})] * 2,
+        )
     assert sorted(response.status_code for response in responses) == [201, 409]
 
     engine = concurrency_app.state.engine

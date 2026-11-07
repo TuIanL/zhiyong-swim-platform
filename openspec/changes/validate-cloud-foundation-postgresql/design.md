@@ -211,3 +211,11 @@ apply 发布 `docs/decisions/0002-postgresql-validation-and-rls-boundary.md`，�
 2. 规划产物先按本次澄清同步修订（schema/search_path、时区隔离、池配置分离、标记规则、清理与 CI 证据），再提交实现，保证 proposal/spec/design/tasks 一致。
 3. 同一 PR 提交实现与真实结果；仅执行测试验证，不自动启动独立 verify、archive 或合并。后续这些阶段分别等待用户授权；主规格同步遵循归档流程。
 4. 回退测试工具/CI 采用正常 revert，丢弃仅本次临时实例；业务默认 SQLite 及旧库均不受测试迁移影响。真实 PG 尚未通过时不能宣称云端生产可用。
+
+
+## 独立核验后补强（2026-11-07）
+
+W1：成员PATCH/DELETE及场馆授予/撤销的遗漏身份组合通过参数用例补齐，拒绝请求比较六表全部持久化状态；owner/admin分别真实授予并撤销自身显式场馆授权后保留机构权限，管理角色新增授权严格断言201。
+W2：三个唯一写入用例分别在目标INSERT的before_cursor_execute处设置双连接会合屏障，双方同时持有连接并断言两个不同后端PID，避免仅在线程启动处会合而数据库仍串行。
+S1：PG_LEDGER另存节点类别，除了状态及总数下限，还要求shared/postgresql两类均被收集；任何必需节点skip/失败仍失败，终端输出两类计数。12个持久回归覆盖缺类、零集合、总数不足、skip/失败/error和正常集合。--dev-select免总数下限但仍需两类，不作为完整验证证据。
+S2：用户明确选择后续改进。当前只记录多架构index digest、实际架构及Docker返回image ID/RepoDigests；未来另解析平台manifest digest，当前不伪称已经具备该字段，不改变PG架构。

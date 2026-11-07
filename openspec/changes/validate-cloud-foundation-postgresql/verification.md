@@ -3,6 +3,8 @@
 核验日期：2026-11-07（Asia/Shanghai）。Schema：spec-driven。
 核验对象：`1736b40f957ecd96d92161838a7d27dde86e687a`，基线main为`4968750`；报告是后续独立核验记录，不属于被核验实现。评审入口：[Draft PR #2](https://github.com/TuIanL/zhiyong-swim-platform/pull/2)。
 
+> 本节至Final Assessment为对1736b40的历史核验；当前修复复核见末尾“W1/W2/S1修复复核”。
+
 ## Summary Scorecard
 
 | 维度 | 核验结果 |
@@ -129,3 +131,19 @@ CRITICAL **0**、WARNING **2**、SUGGESTION **2**。适用检查6项均执行；
 **未发现CRITICAL；有2项WARNING、2项SUGGESTION。全部适用检查已执行，没有Not verified项。** 按技能的建议性门槛为 **Ready for archive (with noted improvements)**，其中W1/W2应由负责人先决定补齐或如何处理；此建议不等于接受例外、产品验收或归档授权。
 
 两个P1定向修复通过本轮核验，但不能把它等同于整个change的所有覆盖描述无缺口。本轮未修实现、改任务勾选、同步主规格、Archive或Merge；PR保持Draft。下一步由负责人评审本报告，并授权回到apply处理问题或继续独立归档流程。
+
+
+## W1/W2/S1修复复核（2026-11-07，当前结论）
+
+用户要求先修复再归档，S2只留后续改进。复核原报告W1/W2/S1对应源码与持久回归：
+
+| 项目 | 修复证据 | 结果 |
+| --- | --- | --- |
+| W1 | test_authorization_matrix.py 的DENIED_WRITES18格、六表前后snapshot、owner/admin各自自身授权撤销与严格201/重复409；两后端完整运行 | 已解决，未接受永久遗留 |
+| W2 | test_postgresql_transactions.py 的distinct_write_connections，三个唯一INSERT各自会合并断言2个不同PID；原冲突/原子性断言保留 | 已解决，不以其他用例外推 |
+| S1 | conftest.PG_CATEGORIES、类别非空及逐节点状态检查；test_pg_collection_guard.py12个持久回归含单一类别满80仍拒绝 | 已解决 |
+| S2 | 用户明确留后续改进；index/platform/image字段边界如实保留 | 唯一剩余SUGGESTION，不扩张本轮范围 |
+
+本机完整重跑SQLite112通过/39专属跳过、PG150通过/1专属跳过，真实removed/exit0；共有151项，无failure/error。报告/设计/任务中的W1/W2验收描述与新增断言已逐项核对；规格要求/18场景保持原业务行为。当前适用检查仍6项，Not verified0，Not applicable0；W1/W2不再作为开放WARNING。最终代码提交与CI证据需在后续交付记录绑定。
+
+当前结论：CRITICAL0、WARNING0、SUGGESTION1（S2，负责人明确延后）。Ready for archive (with noted improvements)，不表示自动合并PR或整个平台完成；归档仍须按技能处理delta sync选择。

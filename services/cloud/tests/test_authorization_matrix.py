@@ -188,7 +188,10 @@ def test_site_grant_and_revoke_matrix(world, client, seeded_account):
 
     for name in ("owner", "admin"):
         user, headers = world.__dict__[name]
-        assert client.post(grant_path, headers=headers, json={"user_id": world.athlete[0]["id"]}).status_code in (201, 409)
+        assert client.post(grant_path, headers=headers, json={"user_id": world.athlete[0]["id"]}).status_code == 201
+        assert client.post(grant_path, headers=headers, json={"user_id": world.athlete[0]["id"]}).status_code == 409
+        assert client.delete(f"{grant_path}/{world.athlete[0]['id']}", headers=headers).status_code == 204
+    assert client.post(grant_path, headers=world.owner[1], json={"user_id": world.athlete[0]["id"]}).status_code == 201
     # 重复授权 409；授权后普通角色立即可以读取该场馆。
     assert client.post(grant_path, headers=world.owner[1], json={"user_id": world.athlete[0]["id"]}).status_code == 409
     assert client.get(tenant_path(world, f"/sites/{world.site['id']}"), headers=world.athlete[1]).status_code == 200
@@ -259,3 +262,55 @@ def test_cross_tenant_site_id_is_rejected(world, client, seeded_account):
     assert client.get(tenant_path(world, f"/sites/{other_site['id']}"), headers=world.owner[1]).status_code == 404
     assert client.get(f"/api/v1/tenants/{other_tenant['id']}/sites", headers=world.owner[1]).json() == []
     assert client.get(tenant_path(world), headers=world.owner[1]).status_code == 200
+
+
+def database_snapshot(app):
+    """拒绝请求前后比较持久化状态，不能只看HTTP错误码。"""
+    from sqlalchemy import select
+    from swimplatform.models import Base
+    with app.state.engine.connect() as connection:
+        return {
+            table.name: [tuple(row) for row in connection.execute(select(table).order_by(*table.primary_key.columns))]
+            for table in Base.metadata.sorted_tables
+        }
+
+
+DENIED_WRITES = [
+    (operation, role, 401 if role == 'anon' else 404 if role == 'outsider' else 403)
+    for operation in ('change_member', 'remove_member', 'grant_site', 'revoke_site')
+    for role in ('anon', 'outsider', 'coach', 'athlete', 'admin')
+    if not (role == 'admin' and operation in ('grant_site', 'revoke_site'))
+]
+
+
+@pytest.mark.parametrize('operation,role,status', DENIED_WRITES)
+def test_denied_member_and_site_writes_have_no_persistent_effect(world, client, app, operation, role, status):
+    target = world.coach[0]['id']
+    member = tenant_path(world, f'/members/{target}')
+    grants = tenant_path(world, f"/sites/{world.site['id']}/members")
+    # 所有失败条件只来自操作者权限；目标成员、机构和场馆均真实存在且归属有效。
+    assert client.post(grants, headers=world.owner[1], json={'user_id': target}).status_code == 201
+    requests = {
+        'change_member': ('PATCH', member, {'role': 'athlete'}),
+        'remove_member': ('DELETE', member, None),
+        'grant_site': ('POST', grants, {'user_id': world.athlete[0]['id']}),
+        'revoke_site': ('DELETE', f'{grants}/{target}', None),
+    }
+    method, path, body = requests[operation]
+    before = database_snapshot(app)
+    headers = None if role == 'anon' else world.__dict__[role][1]
+    response = client.request(method, path, headers=headers, **({'json': body} if body else {}))
+    assert response.status_code == status, response.text
+    assert database_snapshot(app) == before
+
+
+@pytest.mark.parametrize('role', ['owner', 'admin'])
+def test_revoking_manager_own_explicit_grant_preserves_tenant_scope(world, client, role):
+    user, headers = world.__dict__[role]
+    site = tenant_path(world, f"/sites/{world.site['id']}")
+    grants = site + '/members'
+    assert client.post(grants, headers=world.owner[1], json={'user_id': user['id']}).status_code == 201
+    assert client.delete(f"{grants}/{user['id']}", headers=world.owner[1]).status_code == 204
+    assert client.get(site, headers=headers).status_code == 200
+    assert [s['id'] for s in client.get(tenant_path(world, '/sites'), headers=headers).json()] == [world.site['id']]
+    assert client.post(tenant_path(world, '/sites'), headers=headers, json={'name': f'{role}-new'}).status_code == 201
