@@ -147,3 +147,5 @@ CRITICAL **0**、WARNING **2**、SUGGESTION **2**。适用检查6项均执行；
 本机完整重跑SQLite112通过/39专属跳过、PG150通过/1专属跳过，真实removed/exit0；共有151项，无failure/error。报告/设计/任务中的W1/W2验收描述与新增断言已逐项核对；规格要求/18场景保持原业务行为。当前适用检查仍6项，Not verified0，Not applicable0；W1/W2不再作为开放WARNING。最终代码提交与CI证据需在后续交付记录绑定。
 
 当前结论：CRITICAL0、WARNING0、SUGGESTION1（S2，负责人明确延后）。Ready for archive (with noted improvements)，不表示自动合并PR或整个平台完成；归档仍须按技能处理delta sync选择。
+
+修复交付提交 `4e3153098eefec9ae0fca1dee0a909d65caa1927` 的 [PR CI 42330560453](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42330560453) 已completed/success；日志确认SQLite112 passed/39 skipped，PG150 passed/1 skipped，类别shared111/postgresql39，真实cleanup=removed，兜底确认absent/exit0（run id e777d69376896dcf）。GitHub临时合并引用be37a43不是实际合并。此前待取得CI的描述已由本记录收口，CLI16/16；W1/W2/S1已解决，S2按用户选择留后续。

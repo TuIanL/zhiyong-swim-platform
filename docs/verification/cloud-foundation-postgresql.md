@@ -207,3 +207,5 @@ PR #2继续保持草稿，未执行独立verify、主规格同步/archive或合�
 本轮真实完整执行：SQLite112 passed/39 PG专属skipped；PG150 passed/1 SQLite专属skipped（共151项），failures/errors=0。新增32个共享参数场景（18拒绝组合+2管理例外+12类别回归），当前111共享+39 PG专属+1 SQLite专属。PG run id f7a0acdd513e7ff1，result=passed/cleanup=removed/pytest_exit_code=0/exit_code=0；arm64、PG17.11及同一镜像锁。命令和日志分别为var/warnings-sqlite.log、warnings-sqlite-junit.xml、warnings-postgresql.log及postgresql-junit.xml/validation-summary.json，均忽略不提交。
 
 修复提交及其CI在下一个证据收口记录绑定；不能用1736b40或0c27b14的旧CI冒充本次测试通过。最终复核结论见本change verification.md末尾；归档前仍按技能完成规格同步选择、同步后校验和真实归档记录。
+
+修复交付提交 `4e3153098eefec9ae0fca1dee0a909d65caa1927` 的 [PR CI 42330560453](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42330560453) 已completed/success；日志确认SQLite112 passed/39 skipped，PG150 passed/1 skipped，类别shared111/postgresql39，真实cleanup=removed，兜底确认absent/exit0（run id e777d69376896dcf）。GitHub临时合并引用be37a43不是实际合并。此前待取得CI的描述已由本记录收口，CLI16/16；W1/W2/S1已解决，S2按用户选择留后续。
