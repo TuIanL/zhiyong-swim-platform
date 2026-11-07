@@ -15,7 +15,7 @@
 | API 的 membership/site_access 按每请求查询；当前测试主要覆盖 coach | 增加 athlete、管理角色例外、降级及连接复用证据 |
 | CI 仅运行默认 pytest；本机 Docker daemon 初始不可用（现已启动） | CI 成为可复现 PG 执行路径；本机未运行时必须明示，不能静默 skip |
 
-Notion 的[云端模型页](https://www.notion.so/410f602574aa8170b565f7fc4c5eab30)仍是早期草稿，包含场馆管理员、RLS 等未来设计；本次依据已合并六表和 RBAC 契约，不把那份草稿当作已实施政策。[基线准入](../../../docs/baseline/cloud-foundation.md)要求先验证迁移、时间/事务和应用层隔离，再独立评审 RLS。
+Notion 的[云端模型页](https://www.notion.so/410f602574aa8170b565f7fc4c5eab30)仍是早期草稿，包含场馆管理员、RLS 等未来设计；本次依据已合并六表和 RBAC 契约，不把那份草稿当作已实施政策。[基线准入](../../../../docs/baseline/cloud-foundation.md)要求先验证迁移、时间/事务和应用层隔离，再独立评审 RLS。
 
 ## Goals / Non-Goals
 
@@ -94,7 +94,7 @@ P1复审修正：pytest子进程额外接收完整container ID、name及owner，
 
 ### D4：当前角色矩阵成为可执行场景
 
-复用 [RBAC 契约](../../../docs/contracts/cloud-rbac.md) 的合法请求前提和错误优先级。测试清单必须对 17 个业务 operation 逐项标记适用身份组合，两个 health/ready 单列；不机械生成无意义的笛卡尔积。
+复用 [RBAC 契约](../../../../docs/contracts/cloud-rbac.md) 的合法请求前提和错误优先级。测试清单必须对 17 个业务 operation 逐项标记适用身份组合，两个 health/ready 单列；不机械生成无意义的笛卡尔积。
 
 | 场景组 | 最少断言 |
 | --- | --- |

@@ -1,7 +1,7 @@
 # PostgreSQL 云端基础验证报告
 
 - 报告日期：2026-11-07（Asia/Shanghai）
-- change：`validate-cloud-foundation-postgresql`（阶段：apply）
+- change：`validate-cloud-foundation-postgresql`（已同步主规格并归档，分阶段历史与当前证据见第 11 节）
 - 实现提交：`1bd0883`（本文件随后续文档提交一起进入同一 PR）
 - 结论适用范围：**仅本文件列出的提交、环境与用例**。不代表 RLS、生产部署或全平台安全验收通过。
 
@@ -209,3 +209,13 @@ PR #2继续保持草稿，未执行独立verify、主规格同步/archive或合�
 修复提交及其CI在下一个证据收口记录绑定；不能用1736b40或0c27b14的旧CI冒充本次测试通过。最终复核结论见本change verification.md末尾；归档前仍按技能完成规格同步选择、同步后校验和真实归档记录。
 
 修复交付提交 `4e3153098eefec9ae0fca1dee0a909d65caa1927` 的 [PR CI 42330560453](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42330560453) 已completed/success；日志确认SQLite112 passed/39 skipped，PG150 passed/1 skipped，类别shared111/postgresql39，真实cleanup=removed，兜底确认absent/exit0（run id e777d69376896dcf）。GitHub临时合并引用be37a43不是实际合并。此前待取得CI的描述已由本记录收口，CLI16/16；W1/W2/S1已解决，S2按用户选择留后续。
+
+## 11. 主规格同步与归档（2026-11-07）
+
+负责人明确选择先同步主规格再归档。`cloud-identity` 合入1项 MODIFIED、5项 ADDED：原标题、Purpose 与其余4项要求保持不变；主规格现有10项要求、22个场景，6个增量要求逐块对照一致，无删除、重命名或剩余增量操作。同步后的主规格 strict 与归档前 change strict 均通过。
+
+原6份 change 文件（含 `.openspec.yaml`）完整移动到[2026-11-07 归档目录](../../openspec/changes/archive/2026-11-07-validate-cloud-foundation-postgresql/archive.md)，移动时逐文件 SHA-256 一致；仅修复 design.md 因目录加深产生的2处相对链接，并新增归档记录。原提案、任务和核验历史保留；当前结论以[修复复核](../../openspec/changes/archive/2026-11-07-validate-cloud-foundation-postgresql/verification.md)末尾为准：CRITICAL0/WARNING0/SUGGESTION1，唯一 S2 按负责人决定后续改进。任务16/16，无未完成产物或任务。
+
+归档前最终收口 head `5fcab84fff71315ad2f8be67ee5fe02ff6d3b20b` 的 [CI 42331063389](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42331063389) 两后端完整通过：SQLite112 passed/39 skipped，PG150 passed/1 skipped，shared111/PG39；run id `2e63a4493d7d0494`，主入口 removed、兜底确认 absent/exit0，上传成功。归档只调整规格与文档，未重跑不受影响的本机业务测试；归档提交的最新 head CI 将单独核对并回链到 [PR #2](https://github.com/TuIanL/zhiyong-swim-platform/pull/2) 与 [Notion 当前阶段](https://www.notion.so/410f602574aa81288834cc297ae5b039)，不以本段旧 head 结果冒充。
+
+主规格同步发生在本 PR 分支，main 保持 `4968750`；PR 保持 Draft，未合并。归档仅收束本次 PostgreSQL 验证 change，不表示四项总体任务、RLS、生产部署或整个云端平台验收完成。既有未跟踪 `docs/workflow/` 模板保持原状，不纳入本 PR。
