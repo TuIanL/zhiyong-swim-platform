@@ -28,13 +28,13 @@
 
 ## 5. CI 与 RLS 边界记录
 
-- [ ] 5.1 新增 PG CI job 复用专用入口并保留 SQLite job，确认共享 API 用例与 PG 专属用例都实际执行；实现 `pg_isready` 有界等待、失败时清理前的脱敏实例日志收集、always 精确清理、脱敏 JUnit/运行摘要/环境证据上传；必需场景零收集、被 skip、共享用例未执行或环境失败必须使 job 失败；通过当前实现 head 的 CI 确认两后端实际执行及两平台架构记录。
+- [x] 5.1 新增 PG CI job 复用专用入口并保留 SQLite job，确认共享 API 用例与 PG 专属用例都实际执行；实现 `pg_isready` 有界等待、失败时清理前的脱敏实例日志收集、always 精确清理、脱敏 JUnit/运行摘要/环境证据上传；必需场景零收集、被 skip、共享用例未执行或环境失败必须使 job 失败；通过当前实现 head 的 CI 确认两后端实际执行及两平台架构记录。
 - [x] 5.2 发布 `docs/decisions/0002-postgresql-validation-and-rls-boundary.md`，记录测试镜像与平台、schema/`search_path` 与权限边界、RLS 后续表/操作、全局身份、可信上下文、连接复用、缺失上下文、owner/BYPASSRLS 门槛；复核未创建 policy 或声称直接 SQL 具有行级隔离，未将草案标成生产架构批准。
 
 ## 6. 集成交付与跨系统同步
 
 - [x] 6.1 汇总本次规格 18 个场景到测试、实际结果和提交的追溯，完成 SQLite/PG 集成结果、OpenSpec change 与主规格 strict、链接和 Git 改动范围检查；报告区分本机/CI、历史/当前及 RLS/生产等未验证范围，不以 strict 代替实现核验。
-- [ ] 6.2 在同一分支/PR 提交实现与证据，更新 Notion 四项既有任务的 PostgreSQL 子范围、文档链接和真实阶段，确认未将总体任务标为完成、未继承 PR #1 批准；交付可供后续独立 verify 的材料和最新 head CI 链接。
+- [x] 6.2 在同一分支/PR 提交实现与证据，更新 Notion 四项既有任务的 PostgreSQL 子范围、文档链接和真实阶段，确认未将总体任务标为完成、未继承 PR #1 批准；交付可供后续独立 verify 的材料和最新 head CI 链接。
 
 ## Workflow follow-up
 
