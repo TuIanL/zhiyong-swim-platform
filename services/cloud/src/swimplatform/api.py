@@ -21,6 +21,18 @@ def fail(status, code, message):
     raise HTTPException(status, detail={"code": code, "message": message})
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    """把数据库读出的时间归一到 UTC 绝对瞬间。
+
+    PostgreSQL 在带时区列上返回 aware datetime，偏移随该连接的会话时区变化；
+    SQLite 则按既有约定返回朴素 UTC 值。前者必须 astimezone 保留瞬间，后者直接
+    补 tzinfo；用 replace 重标 aware 值会把非 UTC 会话的截止时间整体平移。
+    """
+    if value is None:
+        return None
+    return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def db_session(request: Request):
     with request.app.state.sessions() as db:
         yield db
@@ -92,7 +104,7 @@ def login(payload: Credentials, request: Request, db: DB):
     user = db.scalar(select(User).where(User.email == payload.email).with_for_update())
     valid = verify_password(payload.password, user.password_hash if user else DUMMY_PASSWORD)
     now = datetime.now(UTC)
-    locked = user and user.locked_until and user.locked_until.replace(tzinfo=UTC) > now
+    locked = bool(user and user.locked_until and as_utc(user.locked_until) > now)
     if not user or not valid or not user.is_active or locked:
         if user and not locked:
             user.failed_logins += 1

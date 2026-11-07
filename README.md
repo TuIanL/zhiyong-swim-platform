@@ -11,8 +11,9 @@
 - 机构成员管理及 owner/admin/coach/athlete 角色边界。
 - 场馆创建、列表、详情和修改；教练/学员通过明确场馆授权访问。
 - 服务器端机构/场馆归属检查、跨机构负向测试、专用测试库和独立初始迁移。
+- PostgreSQL 17 专用可销毁实例上的迁移、schema、最小权限、角色矩阵与并发事务验证（见下方“验证”）。
 
-这是本地开发基线，尚未完成商业化平台。网页应用、邮件验证/找回密码、所有权转移、平台管理员、PostgreSQL/RLS 实测、外部身份系统、审计日志、Edge、媒体/视频与模型接入均待后续建设；当前没有复制旧演示数据或接入真实学员资料。
+这是本地开发基线，尚未完成商业化平台。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、审计日志、Edge、媒体/视频与模型接入均待后续建设；当前没有复制旧演示数据或接入真实学员资料。
 
 ## 启动
 
@@ -33,12 +34,34 @@ sh scripts/dev-cloud.sh serve
 
 ## 验证
 
+本地默认只跑 SQLite（不改变日常语义，也不需要 Docker 或数据库）：
+
 ```bash
 python -m pytest
 OPENSPEC_TELEMETRY=0 openspec validate --specs --strict
 ```
 
-每项集成测试在 pytest 临时目录创建真实 SQLite 库并执行新版迁移，不连接旧库。当前覆盖注册角色注入、密码与会话、账号锁定、机构隔离、场馆授权/撤销、成员移除、复合外键、迁移一致性与安全初始化。PostgreSQL 驱动已声明，尚未实际运行 PostgreSQL；SQLite 的通过不作为 PostgreSQL/RLS 验收证据。
+PostgreSQL 需要显式启用，由专用入口创建可销毁实例并自动清理：
+
+```bash
+python scripts/test-postgresql.py            # 共享 API 用例 + PostgreSQL 专属用例
+```
+
+- 入口不接受任何数据库地址参数；`SWIM_CLOUD_DATABASE_URL` 与全部 `PG*` 变量会被忽略并剔除，不会连到业务库或旧库。
+- 镜像在 [`configs/postgresql-test-image.json`](configs/postgresql-test-image.json) 锁定到 PostgreSQL 17 具体补丁与多架构 manifest list digest，本机 arm64 与 CI amd64 使用同一发布物。
+- 每次运行新建唯一容器（`swim-pg-test-<run id>`）、回环随机端口、`tmpfs` 数据卷；结束按 run id 精确删除，**不要**执行 `docker system prune`。
+- 产物写到 `var/`：`postgresql-junit.xml`、`postgresql-validation-summary.json`、失败时的 `postgresql-instance.log`（已脱敏）。
+
+用例分三层：无标记为共享 API 用例（两后端都跑），`sqlite` 为 SQLite 专属，`postgresql` 为 PostgreSQL 专属。PostgreSQL 入口会同时运行共享与专属用例；若必需场景零收集、被跳过或共享用例未执行，入口非零退出，不会回退 SQLite 冒充通过。
+
+若进程被 `SIGKILL`、宿主崩溃或断电，无法保证即时清理。恢复时先按 label 列出容器，逐条核对名称后再删除：
+
+```bash
+docker ps -a --filter label=com.zhiyong.swim-pg-test.run --format '{{.Names}}'
+docker rm --force swim-pg-test-<run id>
+```
+
+每项集成测试在隔离临时库内执行新版迁移，不连接旧库。当前 SQLite 覆盖注册角色注入、密码与会话、账号锁定、机构隔离、场馆授权/撤销、成员移除、复合外键、迁移一致性与安全初始化；PostgreSQL 另有 schema `swim_cloud` 落点、六表约束与级联、迁移中断回滚、应用身份最小权限、角色矩阵、连接复用与并发事务证据。结论以[PostgreSQL 验证报告](docs/verification/cloud-foundation-postgresql.md)中的提交与环境为准；RLS 与生产部署仍未验证。
 
 ## 结构
 
@@ -52,7 +75,7 @@ configs/              非敏感配置与模型选型记录
 var/                  本地开发数据（不提交）
 ```
 
-已创建新版专属 `.venv`，独立安装依赖并构建/安装项目 wheel，没有复用旧 `.conda` 或 `.env`、也没有向全局安装依赖。依赖锁记录本轮验证组合；依赖漏洞审计、其他操作系统及 PostgreSQL 环境仍需验证。开发脚本显式使用新版源码与环境；源码改动后无需重新安装 wheel。
+已创建新版专属 `.venv`，独立安装依赖并构建/安装项目 wheel，没有复用旧 `.conda` 或 `.env`、也没有向全局安装依赖。依赖锁记录本轮验证组合；依赖漏洞审计与其他操作系统仍需验证；PostgreSQL 已在专用实例验证，RLS、生产部署与生产数据操作仍未验证。开发脚本显式使用新版源码与环境；源码改动后无需重新安装 wheel。
 
 本机曾出现隐藏 `.pth` 被 Python3.13 忽略的可编辑安装问题，已通过正常 wheel 安装及显式源码开发入口验证；打包回归用例防止 pytest 的源码路径掩盖安装问题。
 

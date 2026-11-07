@@ -1,0 +1,10 @@
+{
+  "repository": "postgres",
+  "tag": "17.11",
+  "digest": "sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f",
+  "major_version": 17,
+  "resolved_at": "2026-11-07",
+  "resolved_from": "docker.io/library/postgres，OCI image index（多架构 manifest list）",
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "note": "测试目标版本，不是生产数据库选型结论；升级补丁需同时更新 digest 与验证报告。"
+}

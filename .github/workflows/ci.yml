@@ -13,3 +13,33 @@ jobs:
       - run: python -m pip install -r requirements-dev.lock
       - run: python -m pip install -e . --no-deps
       - run: python -m pytest
+  postgresql:
+    name: PostgreSQL 17 validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-dev.lock
+      - run: python -m pip install -e . --no-deps
+      # 专用可销毁实例由入口自己创建；就绪等待、身份探测与清理都在入口内。
+      # 必需场景零收集、被 skip、共享 API 用例未执行或环境失败都会使本步骤非零退出。
+      - name: Run shared and PostgreSQL specific tests
+        run: python scripts/test-postgresql.py
+      # always 兜底：只按本次 run id 精确删除，不做全局 prune。
+      - name: Cleanup dedicated instance
+        if: always()
+        run: python scripts/test-postgresql.py --cleanup-run-file var/pg-test-run.json
+      # 脱敏 JUnit、运行摘要（镜像 digest/架构/版本/时区/清理状态）与失败实例日志。
+      - name: Upload PostgreSQL evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgresql-evidence
+          path: |
+            var/postgresql-junit.xml
+            var/postgresql-validation-summary.json
+            var/postgresql-instance.log
+          if-no-files-found: warn
+          retention-days: 14

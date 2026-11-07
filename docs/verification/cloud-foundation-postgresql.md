@@ -1,0 +1,221 @@
+# PostgreSQL 云端基础验证报告
+
+- 报告日期：2026-11-07（Asia/Shanghai）
+- change：`validate-cloud-foundation-postgresql`（已同步主规格并归档，分阶段历史与当前证据见第 11 节）
+- 实现提交：`1bd0883`（本文件随后续文档提交一起进入同一 PR）
+- 结论适用范围：**仅本文件列出的提交、环境与用例**。不代表 RLS、生产部署或全平台安全验收通过。
+
+## 1. 本次交付
+
+| 文件 | 作用 |
+| --- | --- |
+| [`scripts/test-postgresql.py`](../../scripts/test-postgresql.py) | 专用实例编排：容器、镜像锁定、回环端口、run id 校验、有界就绪等待、清理与失败日志 |
+| [`configs/postgresql-test-image.json`](../../configs/postgresql-test-image.json) | PostgreSQL 17.11 多架构 manifest list digest 锁定 |
+| [`services/cloud/tests/pg_support.py`](../../services/cloud/tests/pg_support.py) | 每例独立库、`swim_cloud` schema、连接级 `search_path`、最小授权、并发辅助 |
+| [`services/cloud/tests/test_postgresql_schema.py`](../../services/cloud/tests/test_postgresql_schema.py) | 六表、schema 落点、约束/级联、降级往返、迁移中断回滚 |
+| [`services/cloud/tests/test_postgresql_identity.py`](../../services/cloud/tests/test_postgresql_identity.py) | 应用身份属性、owner 关系、负向权限探测 |
+| [`services/cloud/tests/test_postgresql_transactions.py`](../../services/cloud/tests/test_postgresql_transactions.py) | 并发唯一写入、五次并发失败登录、持锁等待 |
+| [`services/cloud/tests/test_connection_reuse.py`](../../services/cloud/tests/test_connection_reuse.py) | 单物理连接顺序复用的隔离证据 |
+| [`services/cloud/tests/test_authorization_matrix.py`](../../services/cloud/tests/test_authorization_matrix.py) | 17 个业务 operation 的角色矩阵（两后端共享） |
+| [`services/cloud/tests/test_authentication_deadlines.py`](../../services/cloud/tests/test_authentication_deadlines.py) | 时区独立的截止时间边界 + SQLite 朴素 UTC 回归 |
+| [`services/cloud/tests/test_pg_harness_guard.py`](../../services/cloud/tests/test_pg_harness_guard.py) | 编排入口的安全边界（无需 Docker） |
+| [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | 保留 SQLite job，新增 PostgreSQL job |
+
+产品代码只改一处：`services/cloud/src/swimplatform/api.py` 增加 `as_utc()` 并在锁定比较处使用（见第 5 节）。
+
+## 2. 执行环境与命令
+
+```bash
+# 本机 SQLite
+python -m pytest
+
+# 本机 PostgreSQL（入口自行创建与销毁实例）
+python scripts/test-postgresql.py
+```
+
+| 项目 | 本机实测值 |
+| --- | --- |
+| 平台 | macOS / Darwin，容器内 `linux/arm64` |
+| 镜像 | `postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f` |
+| `server_version` | `17.11 (Debian 17.11-1.pgdg13+2)` |
+| 实例默认时区 | `Etc/UTC`（各用例库另行设置 UTC / Asia/Shanghai） |
+| 驱动 | psycopg 3.2.3（`psycopg[binary]`），SQLAlchemy 2.0.36，Alembic 1.14.0 |
+| 数据库身份 | `swim_admin`（管理员，仅建库/建 schema/授权/销毁）、`swim_migrator`（schema owner，执行迁移）、`swim_app`（非特权应用身份） |
+| 运行记录 | run id `00bc4d4411ebb1d2`，`cleanup=removed`，`result=passed` |
+
+## 3. 首轮apply历史运行结果（P1修复前）
+
+| 后端 | 结果 | 说明 |
+| --- | --- | --- |
+| SQLite（本机，`python -m pytest`） | 48 passed，39 skipped | 跳过项全部是 `postgresql` 专属用例 |
+| PostgreSQL（本机，入口脚本） | 86 passed，1 skipped，0 failed | 跳过项为 1 个 `sqlite` 专属用例；共收集 87 项，18.2 秒 |
+| SQLite（GitHub Actions amd64） | 48 passed，39 skipped，0 failed | [PR CI 42324575127](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42324575127)，实现交付 head `4cfa39d` |
+| PostgreSQL（GitHub Actions amd64） | 86 passed，1 skipped，0 failed | 同一 PR CI；共享与 PG 专属用例实际运行，清理与上传步骤成功 |
+
+分类计数：共享 API 用例 47 项（两后端都跑）、`postgresql` 专属 39 项、`sqlite` 专属 1 项。
+
+### 3.1 接续 apply 时补取的 CI 证据
+
+2026-11-07，通过 GitHub 连接器查询实现交付 head `4cfa39d95f4a1b80ea28006f3153e3e6c6810950` 的 PR 工作流，读取两个 job 的步骤及实际日志，并下载核对 [PostgreSQL 证据包](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42324575127/artifacts/13554132959)。不是仅凭工作流绿灯或任务勾选作结论。
+
+| 证据项 | 核对结果 |
+| --- | --- |
+| 绑定提交 | PR head `4cfa39d`；checkout 日志为 GitHub 临时合并引用 `90cb859`（将该 head 与 `main@4968750` 组合），不表示 PR 已合并 |
+| SQLite job | `128256767322`，completed/success；实际 pytest 输出 `48 passed, 39 skipped` |
+| PostgreSQL job | `128256767499`，completed/success；87项中86 passed、1 skipped，failures=0、errors=0；跳过项仅 `test_sqlite_naive_utc_deadlines_stay_compatible` |
+| 共享场景 | PG JUnit 包含共享 API 和 PG 专属用例，不是只执行 `-m postgresql`；与本机47共享+39专属计数一致 |
+| CI平台/版本 | 摘要实际值 `linux/amd64`、`17.11 (Debian 17.11-1.pgdg13+2)`、`TimeZone=Etc/UTC`；驱动安装日志确认 psycopg 3.2.3 |
+| 镜像 | 与本机相同 `postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f`；摘要中的image_id/repo_digests亦返回该值，不额外推定单平台清单digest |
+| 身份/退出/清理 | `swim_admin` / `swim_migrator` / `swim_app`；pytest_exit_code=0，result=passed，cleanup=removed；always清理步骤success |
+| 实例运行标识 | CI `9703ff47682511cb`，与本机 `00bc4d4411ebb1d2` 分开；证据包内字段 `local_execution=true` 不用于判定运行宿主，以工作流来源和实际platform为准 |
+
+证据包中的摘要与JUnit已读取，本地副本位于被忽略的 `var/ci-evidence/42324575127/`，不提交凭据或测试数据。Actions证据包保留期14天；本报告保存核对后的结果、提交和日志入口。接续工作只调整文档/任务状态，未重新在本机运行业务或数据库测试；收口提交的CI状态继续在PR及Notion最新交付记录中绑定实际head。
+
+## 4. 18 个规格场景到实际证据
+
+| # | 场景 | 用例 | 本机结果 |
+| --- | --- | --- | --- |
+| 1 | Initialization points to external database | `test_cloud_foundation.py::test_cli_refuses_external_or_legacy_database`（2 参数） | SQLite/PG 均通过 |
+| 2 | PostgreSQL target is not owned by this run | `test_pg_harness_guard.py::test_host_port_resolution_requires_own_container_and_loopback`、`::test_entry_point_has_no_database_url_option`、`::test_environment_drops_business_dsn_and_all_libpq_variables`、`::test_run_id_and_container_name_are_validated` | 均通过 |
+| 3 | Restricted application identity | `test_postgresql_identity.py`（18 项，含 `CREATE SCHEMA`/`TRUNCATE`/版本表写/`SET ROLE`） | PG 18/18 通过 |
+| 4 | Failure during test execution | `test_pg_harness_guard.py::test_cleanup_only_removes_its_own_container`、`::test_cleanup_from_run_file_rejects_forged_or_mismatched_records`、`::test_unavailable_docker_fails_without_sqlite_fallback`；运行摘要 `cleanup=removed` | 均通过 |
+| 5 | Empty database migration and round trip | `test_postgresql_schema.py::test_revision_and_version_table_live_in_dedicated_schema`、`::test_downgrade_and_upgrade_roundtrip` | 通过 |
+| 6 | Invalid cross tenant reference | `::test_composite_foreign_keys_reject_cross_tenant_references` | 通过 |
+| 7 | Unique keys and cascading removal | `::test_unique_constraints_reject_duplicates_without_residue`、`::test_cascading_removal_keeps_unrelated_tenants` | 通过 |
+| 8 | Interrupted migration transaction | `::test_interrupted_migration_rolls_back_ddl_and_version` | 通过 |
+| 9 | Role and operation matrix | `test_authorization_matrix.py`（10 项，覆盖 17 个 operation + health/ready） | SQLite/PG 均通过 |
+| 10 | Explicit site access and management exception | `::test_site_grant_and_revoke_matrix`、`::test_admin_downgrade_and_management_exception` | SQLite/PG 均通过 |
+| 11 | Membership removal and role downgrade | `::test_permission_changes_apply_to_existing_sessions`、`::test_admin_downgrade_and_management_exception` | SQLite/PG 均通过 |
+| 12 | Reused connection across identities | `test_connection_reuse.py`（2 项，`pool_size=1`，`pg_backend_pid()` 唯一） | PG 通过 |
+| 13 | Equivalent instants in different timezones | `test_authentication_deadlines.py::test_deadlines_are_absolute_instants_in_each_timezone[UTC|Asia/Shanghai]`、`::test_reused_connection_keeps_database_timezone_and_search_path` | PG 通过（修复后） |
+| 14 | SQLite compatibility | `::test_sqlite_naive_utc_deadlines_stay_compatible`、`test_cloud_foundation.py::test_account_lockout`、`::test_expired_and_deactivated_sessions_are_rejected` | SQLite 通过 |
+| 15 | Concurrent unique writes | `test_postgresql_transactions.py::test_concurrent_tenant_slug_writes_leave_one_record`、`::test_concurrent_registration_same_email`、`::test_concurrent_site_name_writes_leave_one_record` | PG 通过 |
+| 16 | Concurrent failed logins | `::test_five_concurrent_failed_logins_are_all_counted`、`::test_login_waits_for_row_lock_and_continues` | PG 通过 |
+| 17 | Missing PostgreSQL prerequisites | `test_pg_harness_guard.py::test_unavailable_docker_fails_without_sqlite_fallback`、`::test_image_lock_rejects_unpinned_or_non_pg17_targets`；conftest 的必需场景统计与下限校验 | 均通过 |
+| 18 | Evidence bound to a revision | 本文件；运行摘要与 JUnit 绑定 run id `00bc4d4411ebb1d2` 与提交 `1bd0883` | 见下节限制 |
+
+## 5. 关键发现
+
+### 5.1 `api.py` 的锁定时间在非 UTC 会话下会整体偏移（已修）
+
+原实现把数据库读出的 `locked_until` 直接 `replace(tzinfo=UTC)`。SQLite 返回朴素值，这样写恰好正确；但 PostgreSQL 在 `Asia/Shanghai` 会话返回 `+08:00` 的 aware 值，`replace` 会把同一墙钟重标为 UTC，使截止时间被推迟 8 小时。
+
+修复前的失败证据（run id `71a795c03f22893d`，实现提交 `1bd0883` 之前的 API 代码）：
+
+```
+FAILED services/cloud/tests/test_authentication_deadlines.py::test_deadlines_are_absolute_instants_in_each_timezone[Asia/Shanghai]
+E  assert 401 == 200        # 恰好到期的锁被判为仍生效
+```
+
+同一时刻的 `[UTC]` 参数通过，`[Asia/Shanghai]` 失败，证明差异只来自会话时区。
+
+修复（`1bd0883`）：新增 `as_utc()`，aware 值用 `astimezone(UTC)` 保留绝对瞬间，朴素值按既有 UTC 约定补 `tzinfo`。修复后两个时区参数与 SQLite 回归用例全部通过，五次/十五分钟锁定策略、token 格式与 API 形状未变。
+
+### 5.2 迁移脚本不管理对象授权
+
+`alembic downgrade base` 后 `alembic_version` 表仍存在（Alembic 既有行为，未清空），重新 `upgrade` 会重建六表，但**不会**恢复应用角色权限——权限来自库外授权，不是迁移的一部分。验证用例在重新升级后显式调用 `grant_application()` 才能继续。
+
+这属于待决策的运维事实：真实部署若采用 schema 重建或降级路径，需要单独的授权步骤。本轮不修改迁移脚本来掩盖它。
+
+## 6. 清理与资源边界
+
+- 每次运行创建唯一容器 `swim-pg-test-<16 位 run id>`，两个 label（`com.zhiyong.swim-pg-test.run`、`.owner`），数据与 socket 放 `tmpfs`，端口只绑 `127.0.0.1`。
+- 结束按 run id 精确 `docker rm --force` 并复验；本次 `cleanup=removed`，运行后 `docker ps -a` 按 label 过滤为 0。
+- 失败时在清理前抓取 `docker logs` 并按本次随机密码脱敏写入 `var/postgresql-instance.log`。
+- 脚本与文档均禁止全局 prune；SIGKILL/宿主崩溃的恢复流程见[决策 0002 第 7 节](../decisions/0002-postgresql-validation-and-rls-boundary.md)与 README。
+
+## 7. 未验证范围与限制
+
+- **CI 与本机分别取证**：最初报告提交 `4cfa39d` 时未取得CI结果；接续apply已补取第3.1节的真实linux/amd64结果。本机历史运行仍绑定 `1bd0883`，不得混作接续工作中新跑的本机结果。
+- **RLS 未实施、未验证**：应用身份拥有表级 DML，直接执行无过滤 SQL 仍可跨机构读取；本报告的“隔离”指应用层授权与连接复用，不是行级安全。
+- **并发覆盖有限**：只覆盖三类竞态（唯一写入、失败登录计数、行锁等待）。撤销权限与同时写入、跨机构并发更新、连接池饱和等未覆盖。
+- **未做性能验证**：无压测、无 SLA、无连接数上限评估。
+- **生产未涉及**：未接触生产数据库、旧库、真实账号；`init-db` 仍只允许新版 `var/` 内的 SQLite。
+- **矩阵不等于全平台安全**：17 个 operation 覆盖的是当前存在的接口；平台管理员、所有权转移、审计、Web/Edge/媒体均未实现。
+- 本机 pytest 的临时目录固定放在 `var/pytest-pg/<run id>/`（已被 `.gitignore` 覆盖），不使用系统临时目录。
+
+
+## 8. 首轮apply接续收口历史（head174a618）
+
+2026-11-07，用户明确要求接续既有apply并允许提交发布到同一PR #2。本轮以交接的14/16为起点，补取第3.1节当前实现head的CI原始证据，完成5.1；四项既有Notion任务的PostgreSQL子范围、摘要、状态及文档回链已同步，PR标题与描述已从propose更新到实际实现，完成6.2。CLI任务16/16，后续收口提交仅包含本报告和任务勾选，不改实现。
+
+[Notion当前阶段](https://www.notion.so/410f602574aa81288834cc297ae5b039)统一维护最终提交及其CI入口；[云端基础](https://www.notion.so/410f602574aa81c8bfa0e4728a58b737)、[隔离测试基线](https://www.notion.so/410f602574aa81e8a757def927b364df)保持待验收；[数据模型](https://www.notion.so/410f602574aa811bbad3c6e452a065b6)、[RBAC](https://www.notion.so/410f602574aa816e87dcd70f56c4100e)仍为进行中，均保留更广未完成范围。没有把本change的实施完成当作总体项目完成。
+
+PR #2继续保持草稿，未执行独立verify、主规格同步/archive或合并；下一步等待用户单独授权verify。原未跟踪工作流模板保留原状，旧工程和历史数据未修改。
+
+
+## 9. 独立技术审阅后的P1定向修复
+
+2026-11-07，项目负责人认可head174a618的核心PostgreSQL结果，同时指出清理失败退出码传播和测试环境归属核验两项P1。本节取代上文首轮16/16作为本轮状态依据；不将首轮CI绿灯外推到修复版本。
+
+### 9.1 修改与要求复核
+
+| 要求/问题 | 定向修复 | 本轮验收证据 |
+| --- | --- | --- |
+| Isolated database validation / P1-2 | 编排入口传递完整container ID、name、run id、owner；PgEnvironment.from_environment在conftest配置阶段通过真实Docker inspect再次核验ID/名称/标签/运行状态/5432回环映射和环境端口，校验通过的对象存入pytest stash再交fixture | 格式完整但无对应容器、daemon不可用、ID/名称/run/owner/端口/回环/运行状态不符均在psycopg连接前拒绝；连接spy断言0次 |
+| Isolated database validation / P1-1 | Docker.inspect只把明确指向该对象的No such object（大小写兼容）判为不存在；其他错误及畸形输出抛HarnessError | daemon/权限错误、错误对象、空数组/畸形JSON分别测试；不会以捕获异常默认absent |
+| Reproducible PostgreSQL validation evidence / P1-1 | 主入口与cleanup-run-file仅接受removed或确认absent；error/refused/removed:unverified及缺少run-file返回非零；摘要先确定最终exit_code，再计算result | rm失败、inspect daemon错误、标签不符、删除未确认、删除后daemon失联5类异常，主入口返回值和真实CLI子进程均断言非零；摘要exit_code/result/cleanup一致 |
+
+对应测试均在 `services/cloud/tests/test_pg_harness_guard.py`：`test_cleanup_failure_propagates_nonzero_and_consistent_summary`、`test_ci_cleanup_command_exits_nonzero_on_failure`、`test_environment_rejects_forged_target_before_database_connection`、`test_pytest_initialization_rejects_complete_environment_without_container`及inspect/rm精确错误分类用例。其余既有PostgreSQL迁移、权限、角色、时区及事务测试完整运行。
+
+### 9.2 本机完整重跑（本轮真实执行）
+
+命令：`.venv/bin/python -m pytest --junitxml=var/p1-sqlite-junit.xml`；`.venv/bin/python scripts/test-postgresql.py`。不是仅执行新增用例。
+
+| 后端 | 最终结果 | 证据 |
+| --- | --- | --- |
+| SQLite | 80 passed / 39 skipped / 0 failures/errors | `var/p1-sqlite.log`、`var/p1-sqlite-junit.xml`；39项均为PG专属 |
+| PostgreSQL | 118 passed / 1 skipped / 0 failures/errors | `var/p1-postgresql.log`、`var/postgresql-junit.xml`；仅SQLite专属截止时间用例跳过 |
+| 真实清理与退出 | result=passed / cleanup=removed / pytest_exit_code=0 / exit_code=0 | run id `01ef97a491cddb93`，主进程实际退出0；按项目label查询容器列表为空 |
+| 平台/数据库 | 本机macOS，容器linux/arm64；PG17.11，默认Etc/UTC | 仍使用第2节锁定镜像及驱动；真实pytest初始化已通过Docker归属核验 |
+
+新增32个测试参数场景，均作为两后端共享安全边界测试执行；总计119项（79共享、39 PG专属、1 SQLite专属）。两后端各有一项既有Starlette/AnyIO弃用警告，不属于失败或跳过必需场景。
+
+中间一轮PG业务测试112通过，但本机Docker返回小写 `error: no such object`，严格匹配将删除确认判为错误；主进程正确退出3且result=failed。随后只对明确的No such object消息做大小写兼容并补回归，再完成上表全量重跑；该中间失败不冒充最终通过。
+
+### 9.3 最新提交与CI
+
+修复提交为 `cd84d439de3de828b837ccbffab90f017263d4df`，代码、测试、设计/规格增量及本报告均在现有Draft PR #2发布。[对应PR CI 42327171420](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42327171420)已completed/success；两个job与清理/上传均success。checkout日志为临时合并引用63d6efb（修复head与main4968750组合），不是实际合并。
+
+| CI证据 | 实际值 |
+| --- | --- |
+| SQLite job 128265022782 | 80 passed / 39 PG专属skipped |
+| PostgreSQL job 128265022953 | 118 passed / 1 SQLite专属skipped，0 failures/errors |
+| 实例及平台 | run id `3257a4068f7034d1`；linux/amd64，PG17.11、默认Etc/UTC，与本机arm64同一镜像锁 |
+| 主入口最终摘要 | result=passed、cleanup=removed、pytest_exit_code=0、exit_code=0 |
+| CI cleanup-run-file实际输出 | status=absent、cleanup=absent、result=passed、exit_code=0；inspect已明确确认目标不存在 |
+| 原始证据 | [CI证据包](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42327171420/artifacts/13554899688)，摘要/JUnit已下载读取，副本在var/ci-evidence/42327171420/（忽略、不提交） |
+
+任务1.1、1.2及5.1已在本轮代码、完整本机测试与真实CI证据均成立后恢复完成，CLI为16/16。OpenSpec change strict与主规格strict均通过，全工程65处相对链接、47处GitHub blob目标及19处Notion链接ID检查通过（GitHub目标按本地对应提交/分支对象核对）；本轮没有改主规格、迁移、产品代码或依赖。
+
+本节随后随证据收口提交发布；该提交只记录已取得的结果与任务状态。最终head完整SHA及其**新一轮**CI链接统一在[PR #2交付描述](https://github.com/TuIanL/zhiyong-swim-platform/pull/2)与[Notion当前阶段](https://www.notion.so/410f602574aa81288834cc297ae5b039)绑定，报告所在提交可由Git历史唯一追溯；不把修复前174a618或代码提交cd84d43的CI充当最终head的新检查。
+
+### 9.4 保留边界
+
+真实容器归属由可信本机Docker daemon的inspect结果证明，不能抵御具有Docker管理权限的恶意操作者在核验后篡改容器/映射；环境变量本身不再作为信任凭据。无run-file时无法确认清理目标，因此CI清理入口失败。既有RLS、生产部署、性能及更广并发限制继续有效。本轮只修复两个P1，等待项目负责人第二轮审阅；不执行Archive或Merge，main保持4968750，PR保持Draft。
+
+
+## 10. W1/W2/S1修复（归档前复核）
+
+2026-11-07，用户要求先补齐W1、W2与S1再归档，S2留后续改进；没有修改业务权限策略、PostgreSQL架构或扩大Change业务范围。
+
+- W1：新增18个合法目标下的拒绝写入身份组合（成员PATCH/DELETE、场馆授予/撤销），在SQLite/PG均比较六张业务表请求前后状态；owner/admin分别验证自身显式授权被撤销后仍可访问/管理本机构；管理角色新增授权从允许201/409改为严格201，再单独验证重复409。
+- W2：三类唯一写入各自在目标INSERT执行前以屏障同时持有两个连接，逐例断言两个不同backend PID，继续断言201/409、单记录和机构owner原子性。
+- S1：类别台账显式要求shared及postgresql同时存在，仍逐节点检查实际通过状态与总数下限；新增12个回归，缺任一类别即使总数80也失败。
+- S2：按用户决策保留为后续改进；当前image ID/RepoDigests与index digest的限制保持如实记录，不当作本轮未完成业务或架构变更。
+
+本轮真实完整执行：SQLite112 passed/39 PG专属skipped；PG150 passed/1 SQLite专属skipped（共151项），failures/errors=0。新增32个共享参数场景（18拒绝组合+2管理例外+12类别回归），当前111共享+39 PG专属+1 SQLite专属。PG run id f7a0acdd513e7ff1，result=passed/cleanup=removed/pytest_exit_code=0/exit_code=0；arm64、PG17.11及同一镜像锁。命令和日志分别为var/warnings-sqlite.log、warnings-sqlite-junit.xml、warnings-postgresql.log及postgresql-junit.xml/validation-summary.json，均忽略不提交。
+
+修复提交及其CI在下一个证据收口记录绑定；不能用1736b40或0c27b14的旧CI冒充本次测试通过。最终复核结论见本change verification.md末尾；归档前仍按技能完成规格同步选择、同步后校验和真实归档记录。
+
+修复交付提交 `4e3153098eefec9ae0fca1dee0a909d65caa1927` 的 [PR CI 42330560453](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42330560453) 已completed/success；日志确认SQLite112 passed/39 skipped，PG150 passed/1 skipped，类别shared111/postgresql39，真实cleanup=removed，兜底确认absent/exit0（run id e777d69376896dcf）。GitHub临时合并引用be37a43不是实际合并。此前待取得CI的描述已由本记录收口，CLI16/16；W1/W2/S1已解决，S2按用户选择留后续。
+
+## 11. 主规格同步与归档（2026-11-07）
+
+负责人明确选择先同步主规格再归档。`cloud-identity` 合入1项 MODIFIED、5项 ADDED：原标题、Purpose 与其余4项要求保持不变；主规格现有10项要求、22个场景，6个增量要求逐块对照一致，无删除、重命名或剩余增量操作。同步后的主规格 strict 与归档前 change strict 均通过。
+
+原6份 change 文件（含 `.openspec.yaml`）完整移动到[2026-11-07 归档目录](../../openspec/changes/archive/2026-11-07-validate-cloud-foundation-postgresql/archive.md)，移动时逐文件 SHA-256 一致；仅修复 design.md 因目录加深产生的2处相对链接，并新增归档记录。原提案、任务和核验历史保留；当前结论以[修复复核](../../openspec/changes/archive/2026-11-07-validate-cloud-foundation-postgresql/verification.md)末尾为准：CRITICAL0/WARNING0/SUGGESTION1，唯一 S2 按负责人决定后续改进。任务16/16，无未完成产物或任务。
+
+归档前最终收口 head `5fcab84fff71315ad2f8be67ee5fe02ff6d3b20b` 的 [CI 42331063389](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42331063389) 两后端完整通过：SQLite112 passed/39 skipped，PG150 passed/1 skipped，shared111/PG39；run id `2e63a4493d7d0494`，主入口 removed、兜底确认 absent/exit0，上传成功。归档只调整规格与文档，未重跑不受影响的本机业务测试；归档提交的最新 head CI 将单独核对并回链到 [PR #2](https://github.com/TuIanL/zhiyong-swim-platform/pull/2) 与 [Notion 当前阶段](https://www.notion.so/410f602574aa81288834cc297ae5b039)，不以本段旧 head 结果冒充。
+
+主规格同步发生在本 PR 分支，main 保持 `4968750`；PR 保持 Draft，未合并。归档仅收束本次 PostgreSQL 验证 change，不表示四项总体任务、RLS、生产部署或整个云端平台验收完成。既有未跟踪 `docs/workflow/` 模板保持原状，不纳入本 PR。
