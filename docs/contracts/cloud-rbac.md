@@ -82,3 +82,49 @@ flowchart TD
 coach与athlete使用相同的非管理角色分支，但已有场景主要创建coach；因此athlete逐接口、授权新增/撤销、机构成员移除后的完整组合仍未独立验证。矩阵每一格没有对应一项运行结果，不计算虚假的完整覆盖率。
 
 后续权限变更应补充逐角色×操作×同/跨机构×已/未授权场馆的负向用例，特别是管理员显式场馆授权撤销例外、成员角色降级和会话/权限变化后的访问。这里记录的是测试缺口，不把它们勾成已验证，也不在此文档change新增测试或实现新权限政策。
+
+## PostgreSQL 运行证据与连接池边界（2026-11-07 追加）
+
+本节记录 change `validate-cloud-foundation-postgresql` 的实施结果，不修改上文的历史结论。证据与提交绑定见[PostgreSQL 验证报告](../verification/cloud-foundation-postgresql.md)。
+
+上文“已有负向用例与覆盖缺口”中列为缺口的部分，本节给出两类补充：**athlete 逐接口覆盖**与**管理角色显式授权撤销例外**。矩阵用例无 `postgresql` 标记，SQLite 与 PostgreSQL 两个后端都实际运行。
+
+### 17 个业务 operation 的适用身份
+
+| # | operation | 匿名 | 非成员 | athlete | coach | admin | owner |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `POST /auth/register` | 201/409/422 | — | — | — | — | — |
+| 2 | `POST /auth/login` | 200/401 | — | — | — | — | — |
+| 3 | `GET /me` | 401 | 200 | 200 | 200 | 200 | 200 |
+| 4 | `POST /auth/logout` | 401 | 204 | 204 | 204 | 204 | 204 |
+| 5 | `POST /tenants` | 401 | 201 | 201 | 201 | 201 | 201 |
+| 6 | `GET /tenants` | 401 | 200（仅所属） | 200 | 200 | 200 | 200 |
+| 7 | `GET /tenants/{id}` | 401 | 404 | 200 | 200 | 200 | 200 |
+| 8 | `GET /tenants/{id}/members` | 401 | 404 | 403 | 403 | 200 | 200 |
+| 9 | `POST /tenants/{id}/members` | 401 | 404 | 403 | 403 | 403 | 201/409 |
+| 10 | `PATCH /tenants/{id}/members/{uid}` | 401 | 404 | 403 | 403 | 403 | 200（owner 自身 409） |
+| 11 | `DELETE /tenants/{id}/members/{uid}` | 401 | 404 | 403 | 403 | 403 | 204（owner 自身 409） |
+| 12 | `POST /tenants/{id}/sites` | 401 | 404 | 403 | 403 | 201 | 201 |
+| 13 | `GET /tenants/{id}/sites` | 401 | 404 | 200（仅授权） | 200（仅授权） | 200（全机构） | 200（全机构） |
+| 14 | `GET /tenants/{id}/sites/{sid}` | 401 | 404 | 404/200 | 404/200 | 200 | 200 |
+| 15 | `PATCH /tenants/{id}/sites/{sid}` | 401 | 404 | 403 | 403 | 200 | 200 |
+| 16 | `POST /tenants/{id}/sites/{sid}/members` | 401 | 404 | 403 | 403 | 201/409 | 201/409 |
+| 17 | `DELETE /tenants/{id}/sites/{sid}/members/{uid}` | 401 | 404 | 403 | 403 | 204 | 204 |
+
+`/health` 与 `/ready` 不在 17 项业务 operation 内，单独验证：无身份可访问，`/ready` 在未迁移库返回 503、迁移后返回 200。
+
+### 连接池配置边界
+
+| 用途 | 配置 | 断言 |
+| --- | --- | --- |
+| 顺序连接复用 | `pool_size=1`、`max_overflow=0` | 交替 A/B/匿名与 409 后成功请求，`pg_backend_pid()` 全程唯一 |
+| 角色矩阵与时间边界 | 应用默认池 | 只做顺序请求，不声称并发证据 |
+| 并发唯一写入 / 五次失败登录 / 持锁等待 | `pool_size=8`、`max_overflow=0`、显式 `pool_timeout` | 反向断言至少两个不同 `pg_backend_pid()`；池饥饿以 `PoolTimeout` 失败 |
+
+两者不可互换：单连接池跑并发会把池饥饿伪装成业务失败，大池跑复用则证明不了“同一连接”。
+
+### 本节仍未覆盖
+
+- RLS 未实施，本节所有“隔离”结论均为应用层授权与连接上下文，不是数据库行级安全。
+- 撤销权限与并发写入同时发生的竞态、跨机构并发更新、连接池饱和行为未验证。
+- 平台管理员、所有权转移、审计日志、Web/Edge/媒体仍未实现。
