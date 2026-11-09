@@ -2,7 +2,7 @@
 
 ## Context
 
-动机与交付范围见[提案](proposal.md)。初稿 2026-11-08，修订 2026-11-09（Asia/Shanghai），基线 `main@afb0e5f`。本 change 只规划领域/API/ADR文档；以下 D1–D10 是供负责人评审的推荐方案，尚未获架构批准或文档 apply 授权，不代表四实体已有表、接口或运行证据。
+动机与交付范围见[提案](proposal.md)。初稿 2026-11-08，修订 2026-11-09（Asia/Shanghai），基线 `main@afb0e5f`。负责人于 2026-11-09 第二轮 Proposal 技术审阅通过并批准以下 D1–D10 作为 v0.1 文档设计方向，随后授权纯文档 Apply。此授权不代表四实体已有表、接口或运行证据，也不批准业务实施。
 
 | 已核对来源 | 事实与边界 |
 | --- | --- |
@@ -16,13 +16,13 @@
 
 **Goals:** 为四实体给出可评审、相互吻合的归属、来源、历史、生命周期、权限与API建议；按真实评审结论在后续文档apply交付三份草案及接线说明。文档应足以暴露取舍，不能保证“后续只补字段、无需再评审关系”。
 
-**Non-Goals:** 本轮不创建正式交付文档、业务代码、DDL、迁移、OpenAPI快照或运行测试；不选存储产品、不部署、不实施RLS。Pool/Lane、业务档案、TrainingTask/训练编排、AnalysisTask/分析结果、Outbox/Inbox、具体离线同步协议及Web均另行提案；不排除Edge离线生成临时记录的业务场景。
+**Non-Goals:** 本 change 只创建文档草案，不实现业务代码、DDL、迁移、OpenAPI快照或运行测试；不选存储产品、不部署、不实施RLS。Pool/Lane、业务档案、TrainingTask/训练编排、AnalysisTask/分析结果、Outbox/Inbox、具体离线同步协议及Web均另行提案；不排除Edge离线生成临时记录的业务场景。
 
 EdgeCredential、UploadSession是解释认证与上传的支持概念；资源显式授权仅约定访问语义，授权记录是否独立建表由业务实施设计决定。MediaBlob可能用于物理内容复用，但是否独立建表、如何引用和清理也留待业务实施。本change不落地这些表、幂等存储、校验worker或离线同步协议。
 
 ## 来源对照 C1–C5
 
-下表是来源核对与本提案的推荐口径，不是已收到的负责人裁决。不存在的来源内容已纠正；推荐范围可随评审修订，不以“等五项全部答复”阻止发布Draft PR。
+下表记录来源核对和评审通过的处理口径；Notion 草稿是来源而非既有实现证据。负责人已批准 D1–D10 当前设计方向；具体未决实施参数仍留后续业务 Change，不反向扩大本 change。
 
 | 编号 | 原来源与差异 | 本次推荐及对应设计 |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ EdgeCredential、UploadSession是解释认证与上传的支持概念；资源�
 | C4 路径/角色 | Notion03/07是域划分与顶层路径草稿，角色多于现有四角色 | D3/D8沿用四角色；Owner/Admin在本机构管理，coach还需自己创建或资源级显式授权，场馆访问不等于视频访问；原19操作不变 |
 | C5 幂等 | Notion07 §7要求任务创建支持Idempotency-Key；不是所有接口均已具备幂等的事实 | D7分离请求幂等、逻辑VideoAsset身份、物理文件内容复用；同SHA-256不合并采集来源，一次性凭据有显式例外，MediaBlob物理设计另议 |
 
-## 模型概览（推荐，待评审）
+## 模型概览（评审通过的文档方向；v0.1 draft，未实施）
 
 ```mermaid
 erDiagram
@@ -193,7 +193,7 @@ Session/Asset列表用不可变(created_at,id)游标，planned.started_at可空�
 
 ## Risks / Trade-offs
 
-- [推荐政策未经评审] → PR明确列出固定归属、云端控制Session、派生同会话、角色/凭据/URL限制，请负责人审阅后再授权文档apply；不是已批准生产架构。
+- [设计方向获评审但尚未实施] → ADR记录第二轮Proposal审阅结论；业务实现仍需独立Change、规格和权限/运行验证，不外推为生产架构。
 - [支持概念被误当扩张] → EdgeCredential/UploadSession及资源显式授权只约定必要语义；MediaBlob/授权记录是否独立建表、幂等存储和完整性实现另由业务change设计。
 - [草案与实施漂移] → 业务实施提案先diff三份文档与ADR，并在实施前写行为规格与新增迁移，不改已发布revision。
 - [失效签名仍可传入/播放] → 限定短期URL，明确不能即时撤回，禁止失效上传变ready；后台清理参数另评审，不删除本地原件。
@@ -202,8 +202,8 @@ Session/Asset列表用不可变(created_at,id)游标，planned.started_at可空�
 
 ## Migration Plan
 
-1. 本次propose只提交本change规划，文档任务保持未完成；正式领域模型、API契约与ADR在明确文档apply后创建。
-2. 文档apply只新增三份草案并更新既有领域模型的未来实体接线，回退为文档回退；不新增revision、代码、OpenAPI或依赖。
+1. Propose 阶段在提交 c07f20e 发布规划；负责人第二轮审阅后明确授权文档 Apply。
+2. 本次文档 Apply 新增三份草案、Apply 交叉核对记录并更新既有领域模型的未来实体接线；回退为文档回退，不新增 revision、代码、OpenAPI 或依赖。
 3. 后续业务实施另开change，先落实存储/校验/清理能力及批准的协议，再提出行为规格、数据库身份/迁移/约束和测试，不从本设计直接执行建表顺序。
 
 ## Open Questions
@@ -215,4 +215,4 @@ Session/Asset列表用不可变(created_at,id)游标，planned.started_at可空�
 - 学员参与关系、Pool/Lane、训练计划/Edge自动编排、多机位时钟对齐算法及离线记录同步协议由各自提案承接；本次仍设计采集时间/基准/时钟来源字段。
 - MediaBlob是否独立建表、物理内容复用与清理实现、资源显式授权记录的物理模型，由业务实施设计确定，不在本Change建表。
 
-D1–D10本身是本Draft PR的明确推荐，不是被藏入Open Questions的未定义选择。负责人若不同意推荐，先改相应设计和任务，再进入文档apply。
+D1–D10方向已获负责人第二轮 Proposal 技术审阅通过；Open Questions 记录的是未决实施参数，不是对已通过方向的保留或新的架构承诺。业务实施须由另一个 Change 明确授权。

@@ -105,16 +105,16 @@ UUID标识使用String(36)，token摘要使用String(64)。`users.locked_until`�
 | 普通成员场馆授权 | 已实现；site_memberships与机构成员关系共同决定访问，管理角色另有机构级权限 | 撤销管理员的显式场馆关系不取消其机构管理权；见[RBAC](../contracts/cloud-rbac.md) |
 | 标识与schema版本 | 已实现UUID字符串标识和Alembic revision `20261106_0001`；API `/api/v1`、应用0.1.0 | 没有业务revision/ETag、离线快照版本或跨端冲突协议 |
 
-当前云端保存账号、成员和场馆配置，不存在Edge副本、离线授权缓存或双向同步。下表只登记后续设计方向，归属/版本/权威规则仍待各自提案；不提前批准完整云边权威关系。
+当前云端保存账号、成员和场馆配置，尚不存在Edge副本、离线授权缓存或双向同步。下表链接的采集/媒体文档方向已通过2026-11-09第二轮Proposal技术审阅，但文件仍为v0.1-draft且没有业务实现。云端是TrainingSession最终业务权威不排斥Edge离线生成临时记录并在恢复联网后同步；身份映射、授权重验及冲突协议另开Change。未来Site/Tenant删除也不得经级联抹除历史Session/Asset、来源或仍需保留的内容引用；保留期限和物理清理尚未确定。
 
 ## 未实现实体与后续提案边界
 
 | 后续实体 | 当前状态 | 后续需要评审的边界 |
 | --- | --- | --- |
 | Pool / Lane | 未实现，无表/接口；待组织模型提案 | 场馆内资源归属、稳定ID、归档/重命名及被历史训练引用时的策略 |
-| EdgeNode / Device | 未实现，无设备身份/接入；待Edge契约提案 | tenant/site绑定、设备凭据撤销、离线授权与配置版本 |
+| EdgeNode / Device | 未实现，无设备身份/接入；设计方向见[采集/媒体领域草案](cloud-capture-media-domain.md)与[ADR 0003](../decisions/0003-capture-media-domain-contracts.md)，v0.1-draft | tenant/site绑定、设备凭据撤销、配置版本和设备来源；搬迁重新登记并保留历史来源，离线协议另行设计 |
 | Athlete / Coach业务档案与关系 | 未实现；当前只有账号成员role，待业务授权提案 | 全局账号与机构档案分离、教练学员关系及跨场馆显式授权 |
-| TrainingSession / VideoAsset | 未实现，无采集/上传；待训练/媒体提案 | tenant/site、学员、采集来源、输入revision、媒体访问与保留规则 |
+| TrainingSession / VideoAsset | 未实现，无采集/上传、无表无接口；设计方向见[采集/媒体领域草案](cloud-capture-media-domain.md)、[API契约草案](../contracts/cloud-capture-media.md)与[ADR 0003](../decisions/0003-capture-media-domain-contracts.md)，v0.1-draft | tenant/site固定归属、云端Session最终状态与Edge离线临时记录、资源级读取授权、采集时间来源及Site/Tenant历史保留；实施仍需独立Change |
 | AnalysisTask / AnalysisResult / Report | 未实现，无新版分析任务；待流水线提案 | 锁定输入版本，记录模型/规则/schema版本，任务身份、产物权限和重算策略 |
 | Outbox / Inbox与同步事件 | 未实现；待云边同步提案 | 事件稳定ID、顺序/重放、幂等、云边各字段权威源与冲突处理 |
 

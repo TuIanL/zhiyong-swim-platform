@@ -4,14 +4,14 @@
 
 现有六表只覆盖账号、机构、成员与场馆，EdgeNode、Device、TrainingSession、VideoAsset 的关系及 API 尚无实现。先形成可评审的领域、权限、生命周期和 API 草案，避免未经评审的归属与历史策略固化进迁移。
 
-初稿创建于 2026-11-08，2026-11-09 依负责人指令修订并发布 propose；事实基线为 `main@afb0e5f`。本轮只发布规划；后续文档 apply 另等明确授权，四实体的业务实施另开行为 change。
+初稿创建于 2026-11-08，2026-11-09 依负责人指令修订并发布 propose；事实基线为 `main@afb0e5f`。负责人第二轮 Proposal 技术审阅已通过并批准 D1–D10 设计方向，随后明确授权本 change 的纯文档 Apply。业务实施仍须另开行为 Change。
 
 ## What Changes
 
-- 文档 apply 计划创建 `docs/architecture/cloud-capture-media-domain.md`：四实体 ERD、基数、字段及复合约束、不可变归属、采集来源、派生链、状态与历史保留；显式列出凭据和上传会话两个支持概念。
-- 计划创建 `docs/contracts/cloud-capture-media.md`：用户侧和设备侧路径、身份/角色/资源范围、请求响应、错误、稳定游标、分片上传与恢复、幂等及短期播放 URL。
-- 计划创建 `docs/decisions/0003-capture-media-domain-contracts.md`：对应设计 D1–D10，分别标明来源事实、推荐方案、实际评审结论和后续实施前置，不把本提案写成已批准架构。
-- 更新 [cloud-domain-model.md](../../../docs/architecture/cloud-domain-model.md) 的「未实现实体与后续提案边界」表，把四项指向新草案，同时保留「未实现、无表/接口」的事实标注。
+- 文档 Apply 已创建 `docs/architecture/cloud-capture-media-domain.md`：四实体 ERD、基数、字段及复合约束、不可变归属、采集来源、派生链、状态与历史保留；显式列出凭据和上传会话两个支持概念。
+- 文档 Apply 已创建 `docs/contracts/cloud-capture-media.md`：用户侧和设备侧路径、身份/角色/资源范围、请求响应、错误、稳定游标、分片上传与恢复、幂等及短期播放 URL。
+- 文档 Apply 已创建 `docs/decisions/0003-capture-media-domain-contracts.md`：对应设计 D1–D10，记录 C1–C5 来源、采纳结论、替代方案、取舍和后续实施前置；批准仅限 v0.1 设计方向。
+- 已更新 [cloud-domain-model.md](../../../docs/architecture/cloud-domain-model.md) 的「未实现实体与后续提案边界」表，把未来实体指向新草案，同时保留「未实现、无表/接口」的事实标注。
 - 推荐首版采用：节点/设备 tenant/site 与挂接关系不可原地迁移；派生资产保持同租户/场馆/会话；云端Session最终状态由云端授权路径推进，Edge可保存离线临时记录；当前Edge上传API只完成自己发起的上传，不据此权威结束整个会话。完整推荐、替代方案与评审问题见[设计](design.md)。
 - 按负责人本轮定向审阅进一步约束：Owner/Admin保持本机构管理范围；coach在有效场馆权限之上，仅能读取自己创建或资源级显式授权的Session/Asset，读取授权不自动授予Session管理权。API列表、详情、播放与授权撤销使用同一资源过滤语义。
 - 分离请求幂等、逻辑VideoAsset身份与物理内容复用：不同设备/不同采集即使SHA-256相同，也保留独立asset_id、来源、采集时间和授权；MediaBlob是否独立建表留后续业务实施设计。
@@ -39,11 +39,15 @@
 - 文档标记 `v0.1-draft／未实现／无表无接口`。评审通过只推进明确授权的阶段，不能直接触发业务实施。
 - 2026-11-09 重读 Notion：直接推进[数据模型任务](https://www.notion.so/410f602574aa811bbad3c6e452a065b6)与[架构契约任务](https://www.notion.so/410f602574aa816582ccc14817ce4601)，总体状态保持进行中；媒体授权、Edge注册、分片上传和组织模型是后续依赖。设计列出五项来源对照 C1–C5、D1–D10 及任务映射，propose 发布时即回写工程入口和原任务。
 
-## 提案交付与停止边界
+## Propose阶段交付记录与当时停止边界（历史）
 
 - 本次工作分支 `docs/define-cloud-capture-media-contracts`，只发布本 change 规划文件与结构/内容核对证据到 Draft PR；工作流模板和 agent 记忆保留未跟踪。
 - 规划完成与文档任务进度分别报告；[任务](tasks.md)全部保持未完成。本轮不是独立 verify，不创建三份正式交付文档、不 apply、不 archive、不 merge。
 - 负责人先评审设计推荐，明确 apply 后再按任务交付草案；不同意的取舍先修改规划。PR head、CI 和 Notion 回链由真实发布结果绑定，不复用 PR #2 的证据。
+
+## 第二轮评审与文档 Apply 授权（2026-11-09）
+
+负责人明确表示 PR #3 第二轮 Proposal 技术审阅通过并批准当前 D1–D10 设计方向，授权基于 `c07f20e103155aca5de9523be670dae813638cbc` 按 tasks.md 完成纯文档 Apply。该评审批准的是 v0.1 草案方向，不是数据库、业务接口、OpenAPI、主规格、RLS 或生产实现。当前文档交付与结构/链接/差异证据见[Apply 交叉核对记录](../../../docs/verification/cloud-capture-media-contracts-apply.md)。
 
 ## 本轮propose核对（2026-11-09）
 
@@ -54,7 +58,7 @@
 
 ## 本轮定向评审追溯（2026-11-09）
 
-| 负责人要求 | 修订位置 | 文档apply验收任务（仍未执行） |
+| 负责人要求 | 修订位置 | 文档apply验收任务（Propose 阶段记录，当时尚未执行） |
 | --- | --- | --- |
 | 教练仅访问自己创建或明确授权的资源，Owner/Admin保持机构管理 | D3、D5、D8、C4；S-read/S-manage/A-read与显式读grant操作 | 1.1、2.1、2.3、4.1 |
 | 请求幂等、VideoAsset身份、物理内容复用分离；不同设备同SHA保留独立来源 | D2、D5、D7、C5及来源关系表；MediaBlob设计延后 | 1.1、2.2、4.1 |
