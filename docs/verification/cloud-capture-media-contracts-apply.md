@@ -51,14 +51,26 @@
 ## 4. ERD、字段、状态、API 与历史交叉核对
 
 - **ERD ↔ 复合约束：** Device 与 EdgeNode、Session 与 Site、Asset 与 Session、派生 Asset 与父记录的租户/场馆关系在 ERD/键表/字段中一致；只把 FK 可以表达的事实列为 FK，状态、互斥主体和无环另需实现逻辑。
-- **字段 ↔ API：** Capture metadata 有原始时间、时间基准、时区/偏移、视频时间轴映射、NTP/PTP/GPS/manual/unknown 来源、可空偏差/精度；received_at/created_at 单列为服务端时间，API 不接受其由客户端覆盖。
+- **字段 ↔ API：** Capture metadata 的原始采集时间统一为 `device_capture_started_at_raw` / `device_capture_ended_at_raw`，API 请求与领域字段同名；另有时间基准、时区/偏移、视频时间轴映射、NTP/PTP/GPS/manual/unknown 来源、可空偏差/精度；received_at/created_at 单列为服务端时间，API 不接受其由客户端覆盖。
 - **幂等 ↔ 资产身份：** 同键同参重放复用同一请求结果；同键异参 409；并发单资源。另一设备或另一次采集即使同 SHA，也创建不同逻辑资产，不因物理复用而共享 grant/生命周期。
-- **状态 ↔ API：** Session、Asset、UploadSession 的状态表和 API 202/200/409 结果一致；取消与 complete 依云端事务先后收敛；expired/failed/aborted 不得变 ready；Session completed 后补传不回退状态。
+- **状态 ↔ API：** UploadSession.completed 与 Asset.ready 原子配对；failed/aborted/expired 和 Session cancel 先获胜均使未完成 Asset.failed；取消、complete、abort、expiry 通过事务串行化或条件更新仅允许一个结果获胜，到期终结可重试；Session 已取消时 complete 返回409。字段或枚举无效返回422，合法目标状态与当前状态机冲突返回409；Session completed 后补传不回退状态。
+- **SessionPatch ↔ 错误：** 允许只改 title；status 为可选字段，提供时枚举必须有效且满足状态机；空 PATCH 返回422，合法但当前状态不允许的迁移返回409。
 - **凭据与上传主体：** 用户 Bearer 与 EdgeCredential 分离；User/Edge 发起者恰一；操作上传会话须原发起者。Owner/Admin 管理资源不等于代替上传者。
 - **删除 ↔ 保留：** 四实体无 DELETE；Site/Tenant 历史与仍保留的共享内容不能经父删除/级联丢失；物理清理须无其他保留引用；既有六表 CASCADE 不扩展。
 - **源代码事实 ↔ 草案：** 现有六表和 19 个 operation 继续由既有契约描述；新 ERD/端点明确为未实现草案，不将自动化基线 CI、strict 或旧验证结果写成新能力测试。
 
-## 5. Apply 范围与结构检查
+## 5. 独立审阅问题定向修订
+
+2026-11-09 的 Apply 独立审阅结论为 CRITICAL 0、WARNING 2、SUGGESTION 2；本次仅按 W1、W2、S1、S2 修订文档、任务验收描述和证据记录，D1–D10 总体方向不变，也不新增实现范围。
+
+| 审阅项 | 修订结论 | 对应位置 |
+| --- | --- | --- |
+| W1 采集时间字段 | 领域模型与 API 请求统一使用 `device_capture_started_at_raw` / `device_capture_ended_at_raw`，无内部/外部别名映射 | 领域模型 `3.4`；API `4`；任务 `1.1` |
+| W2 上传终态 | completed→Asset.ready；failed/aborted/expired→未完成 Asset.failed；Session cancel 先获胜则上传失败、Asset.failed、complete 返回409；终态更新同事务，竞态串行化或条件更新，到期处理可重试 | 领域模型 `5`；API `5/7`；任务 `1.2/2.2` |
+| S1 SessionPatch | 仅 title 的 PATCH 合法；status 可省略但若提供须是有效且可迁移的状态；空 PATCH 为422 | API `4/7`；任务 `2.1` |
+| S2 链接证据 | 实际扫描9份 Markdown、51个本地链接、0失效；检查文件清单见下方结构检查表 | 本记录 `5.1` |
+
+## 5.1 Apply 范围与结构检查
 
 本文件是文档间的一致性核对记录，不运行服务、数据库、迁移、API、业务测试或独立 Verify。结构检查与语义核对分开：
 
@@ -66,7 +78,7 @@
 | --- | --- | --- |
 | Change strict | `openspec validate define-cloud-capture-media-contracts --strict --json` | 1/1 passed、0 failed；唯一 INFO 为 .openspec.yaml 设置 skip_specs，表示本 change 无规格增量 |
 | 主规格 strict | `openspec validate --specs --strict --json` | cloud-identity 1/1 passed，0 failed；主规格文件未修改 |
-| Markdown 本地链接 | Python 3 临时 Markdown 链接解析器，扫描 proposal/design/tasks、三份交付文档、交叉核对记录和既有领域模型（共 8 份 Markdown），逐个解析本地相对路径及标题锚点 | 51 个本地链接已检查，0 个失效 |
-| whitespace | `git diff --check` | 通过；最终 Git 差异范围与保护文件哈希在发布前再核对 |
+| Markdown 本地链接 | Python 3 临时 Markdown 链接解析器，共扫描9份 Markdown并解析本地相对路径及标题锚点：`docs/architecture/cloud-capture-media-domain.md`、`docs/architecture/cloud-domain-model.md`、`docs/contracts/cloud-capture-media.md`、`docs/decisions/0003-capture-media-domain-contracts.md`、`docs/verification/cloud-capture-media-contracts-apply.md`、`openspec/changes/define-cloud-capture-media-contracts/README.md`、`proposal.md`、`design.md`、`tasks.md` | 51 个本地链接已检查，0 个失效 |
+| whitespace | `git diff --check` | 本次修订后的差异检查通过；Git 发布范围与未跟踪保护文件另在 PR/Notion 当前 head 记录 |
 
 这些结果只证明结构、相对链接和差异格式，不验证运行中的业务行为。原有业务测试未运行；没有新表、新接口、迁移或生产/RLS 验收。发布后实际 PR head、对应 CI 状态和 Notion 保存情况由同一 PR 与工程入口/原任务的最终同步记录绑定，不能把旧 head CI 当作本次文档验证。

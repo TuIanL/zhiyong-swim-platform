@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 6095)
+Total output lines: 192
+
 # 云端采集与媒体 API 契约草案
 
 > **v0.1-draft／未实现／无表无接口**
@@ -79,45 +82,10 @@ POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/playba
 | GET `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}` | 原发起用户且有 S-manage | 无 | 200 UploadSessionRead + 已确认分片 |
 | POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/part-urls` | 原发起用户且有 S-manage | PartUrlRequest | 200 PartUrlRead 数组 |
 | POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/complete` | 原发起用户且有 S-manage | CompleteRequest | 202 completing 或 200 completed + AssetRead |
-| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/abort` | 原发起用户且有 S-manage | 无 | 204 |
-| POST `/api/v1/edge/heartbeat` | 有效 EdgeCredential，仅本节点 | HeartbeatRequest | 200 HeartbeatRead；仅上报本节点观测 |
-| POST `/api/v1/edge/sessions/{session_id}/upload-sessions` | 有效节点凭据；Session 同 tenant/site，Device 属于该节点且 active | EdgeUploadIntentCreate | 201 UploadIntentRead + 初始 AssetRead |
-| GET `/api/v1/edge/upload-sessions/{upload_session_id}` | 原发起节点、有效凭据 | 无 | 200 UploadSessionRead + 已确认分片 |
-| POST `/api/v1/edge/upload-sessions/{upload_session_id}/part-urls` | 原发起节点、有效凭据 | PartUrlRequest | 200 PartUrlRead 数组 |
-| POST `/api/v1/edge/upload-sessions/{upload_session_id}/complete` | 原发起节点、有效凭据 | CompleteRequest | 202 completing 或 200 completed + AssetRead |
-| POST `/api/v1/edge/upload-sessions/{upload_session_id}/abort` | 原发起节点、有效凭据 | 无 | 204 |
-
-首版不提供 Edge 全局结束 Session 的端点、不提供四实体 DELETE，也不提供 Edge 对其他节点上传的接管/完成/中止操作。Edge 只为自己发起的上传会话续传、查询和确认。
-
-## 4. 请求与响应字段
-
-所有新增请求对象建议拒绝未知字段。tenant_id、site_id、created_by、origin、source_edge_node_id、created_at、received_at、status 中由服务端决定的字段不能由调用方覆盖。UUID 格式沿现有基础 API 约定；具体长度限制在实现 Change 中定案。
-
-| 请求模型 | 字段 | 来源和校验 |
-| --- | --- | --- |
-| EdgeNodeCreate | name | Owner/Admin 提供；tenant/site 从路径确定 |
-| EdgeNodePatch | name?, status? | 仅可变字段；pending/active/disabled 转换遵守 ADR 0003 |
-| CredentialCreate | expires_at? | 凭据有效期策略待实施定案；不得请求密钥值 |
-| DeviceCreate | edge_node_id, name, kind, hardware_serial? | 节点必须属于路径 Site/Tenant 且 active；hardware_serial 不作为认证 |
-| DevicePatch | name?, status? | 不接受 tenant/site/edge_node_id 迁移 |
-| SessionCreate | title? | created_by_user_id/status/时间由云端产生；创建默认 planned |
-| SessionPatch | title?, status | 只有 S-manage；不接受归属、creator 或历史时间字段 |
-| GrantPut | expires_at? | 目标 Coach 必须是本机构成员并具该 Site 访问权；物理授权记录模型待定 |
-| UploadIntentCreate | expected_size_bytes, expected_sha256, media_type, capture_metadata | 人工来源；initiator/creator 由登录身份写入；Asset pending_upload |
-| EdgeUploadIntentCreate | device_id, expected_size_bytes, expected_sha256, media_type, capture_metadata | origin=edge/source_node 由凭据解析；device 必属该 node/Site；不接受自报另一来源 |
-| capture_metadata | capture_started_at_raw?, capture_ended_at_raw?, device_time_basis, device_timezone?, device_utc_offset_minutes?, video_timebase_kind, video_timebase_metadata?, device_clock_source, device_clock_offset_ms?, device_clock_accuracy_ms? | 原始设备时间与服务端时间分开；unknown 显式表示；不根据 Site 时区猜设备时区 |
-| PartUrlRequest | part_numbers[] | 编号唯一、正数且在实现限制内；签名只对应指定对象/分片 |
-| CompleteRequest | parts[{part_number,etag}] | 逐项与服务端记录核对；客户端回执不是完整性证明 |
-| HeartbeatRequest | reported_config_revision?, health?, observed_at_raw? | 只更新本节点观测；不能改节点身份/权限/Session 状态 |
-
-新列表只对 Session 与 Asset 固定建议的游标规则：按不可变 (created_at,id) 升序/降序之一，具体方向在实现时固定；planned Session 的 started_at 可空，不作为排序键。limit 建议默认 20、上限 100。游标应绑定 tenant/site、筛选条件和排序版本；每次续页重新检查当前身份、grant 和资源过滤，旧游标不绕过撤权。先过滤可见资源再形成 page 和 next_cursor。节点/设备列表当前不承诺分页，避免扩张为全 API 分页改造。
-
-| 读取模型 | 主要响应字段 |
-| --- | --- |
-| EdgeNodeRead | id, tenant_id, site_id, name, status, config_revision, applied_config_revision, last_seen_at, created_at, updated_at |
+| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions…1095 tokens truncated…name, status, config_revision, applied_config_revision, last_seen_at, created_at, updated_at |
 | DeviceRead | id, tenant_id, site_id, edge_node_id, name, kind, status, hardware_serial, created_at, updated_at |
 | SessionRead | id, tenant_id, site_id, created_by_user_id, title, status, started_at, completed_at, cancelled_at, created_at, updated_at |
-| AssetRead | id, tenant_id, site_id, session_id, origin, creator/source IDs, derived_from_asset_id, status, capture metadata, received_at, media_type, size_bytes, checksum_sha256, created_at, updated_at |
+| AssetRead | id, tenant_id, site_id, session_id, origin, creator/source IDs, derived_from_asset_id, status, capture_metadata（含与创建请求同名的 device_capture_started_at_raw / device_capture_ended_at_raw）, received_at, media_type, size_bytes, checksum_sha256, created_at, updated_at |
 | CredentialRead | id, edge_node_id, issued_at, expires_at, revoked_at；绝不返回 token 明文/hash |
 | CredentialIssued | credential: CredentialRead, secret: string；仅创建响应一次返回 |
 | UploadSessionRead | id, asset_id, status, expected_size_bytes, expected_sha256, expires_at, confirmed_parts[], completed_at |
@@ -132,15 +100,19 @@ POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/playba
 
 推荐流程：
 
-1. 原发起用户/节点在目标 Session 创建 UploadSession；云端创建 pending_upload Asset，记录发起主体、不可变归属、来源及采集元数据。
+1. 原发起用户/节点在目标 Session 创建 UploadSession；云端在同一事务内创建 pending_upload Asset 与 UploadSession，记录发起主体、不可变归属、来源及采集元数据。
 2. 原发起主体申请限定对象/分片/动作的短时 part URL 并直接上传；不能对桶或任意对象取得通用写权限。
 3. 断线后查询 UploadSession，依据服务端确认的分片列表补传；本地分片回执只作客户端进度提示。
 4. 原发起主体提交 complete；云端逐项核对分片、合并对象并验证整对象 bytes、SHA-256 和媒体元数据。校验成功才将 Asset 置 ready。校验进行中可返回 202，后续 GET 查询状态；完成后的重复 complete 返回同一 Asset，不重复创建或合并。
-5. 任一步显式 abort/过期后拒绝 complete 和新 URL；已签上传 URL 在自身到期前仍可能写入对象，但不能使失败/过期 Asset 变 ready，孤儿对象清理策略另行设计。
+5. 显式 abort、过期、校验失败或 Session 取消使尚未 ready 的 VideoAsset 进入 failed，并将对应 UploadSession 原子终结为 aborted、expired 或 failed；随后拒绝 complete 和新 URL。已签上传 URL 在自身到期前仍可能写入对象，但不能使失败/过期 Asset 变 ready，孤儿对象清理策略另行设计。
 
-UploadSession 建议状态：uploading、completing、completed、failed、aborted、expired。Asset 建议状态：pending_upload、ready、failed。分片数/大小、URL 有效期、服务端校验 worker、孤儿对象清理期限都是后续实施门槛；不得降低为“所有分片已收到即 ready”。
+UploadSession 建议状态：uploading、completing、completed、failed、aborted、expired。Asset 建议状态：pending_upload、ready、failed。终态映射为 `completed → ready`、`failed/aborted/expired → failed`；Session 已取消时 complete 返回 409 `upload_not_completable`，并将仍未完成的 UploadSession 设为 failed、关联 pending Asset 设为 failed。完成校验结果、UploadSession 终态与 Asset 终态须原子提交；failed/aborted/expired 不能再完成或回到 pending_upload/ready。
 
-Session 状态为 planned、recording、completed、cancelled。云端有权主体推进最终业务状态。Cloud cancel 与 upload complete 并发时以云端事务的先后结果为准：cancel 先确认则未完成 Asset 不能 ready；ready 先确认则后续 cancel 不删除既有资产。completed Session 可以接收规则允许的补传但不能回退状态。
+Session cancel、complete、abort 与 expiry 竞争必须通过同一事务边界串行化，或通过基于当前状态的条件更新保证只有一个事务提交。取消先获胜时，活动上传和对应 pending Asset 一并失败；complete 先完成整对象校验并提交时，UploadSession.completed 与 Asset.ready 一并提交，之后的 Session cancel 不回退 Asset。事务失败不能只写入其中一侧；重复请求返回唯一已提交结果，状态输家返回当前终态或 409。到期处理须能重试，将过期的 uploading/completing 与 Asset.pending_upload 共同终结，不能遗留无限期 pending_upload。对象存储的实际回收仍属后续设计。
+
+请求字段/枚举值无效（包括无效 Session 状态枚举或空 SessionPatch）返回 422；目标枚举合法、但当前状态机不允许该迁移时返回 409。分片数/大小、URL 有效期、服务端校验 worker、孤儿对象清理期限都是后续实施门槛；不得降低为“所有分片已收到即 ready”。
+
+Session 状态为 planned、recording、completed、cancelled。云端有权主体推进最终业务状态。Cloud cancel 与 upload complete 并发时以云端事务的先后结果为准：cancel 先确认则未完成 UploadSession.failed、对应 Asset.failed，complete 返回 409；完整性确认先提交则 UploadSession.completed、Asset.ready，后续 cancel 不删除既有资产。枚举有效但目标迁移与当前状态冲突用 409；字段缺失、格式无效或枚举值不属于契约用 422。completed Session 可以接收规则允许的补传但不能回退状态。
 
 ## 6. 幂等、逻辑 Asset 身份与物理复用
 
@@ -167,10 +139,10 @@ asset_id 标识一次独立的采集、导入或派生记录。只有被证明�
 | 401 | unauthorized / edge_unauthorized | 用户身份失效；Edge 凭据缺失/无效/撤销/节点已停用 |
 | 403 | forbidden | 已确认机构成员但不具备管理、授权授予或操作权限 |
 | 404 | tenant_not_found / site_not_found / training_session_not_found / video_asset_not_found / upload_session_not_found | 非成员、资源跨机构/场馆或调用者无资源读取路径；避免泄露资源存在性 |
-| 409 | state_conflict / idempotency_conflict / credential_secret_not_replayable / upload_not_completable | 终态冲突、同键异参、一次性密钥重放或分片/Session 状态不允许完成 |
-| 422 | validation_error / immutable_field | 字段、时间基准组合、非法迁移/客户端自报归属字段格式不合约 |
+| 409 | state_conflict / idempotency_conflict / credential_secret_not_replayable / upload_not_completable | 请求值本身合法，但当前状态机不允许目标迁移或分片/已取消 Session 状态不允许完成；同键异参或一次性密钥重放 |
+| 422 | validation_error / immutable_field | 请求字段/组合/枚举无效、未知或不可变字段、SessionPatch 为空或未包含可写字段 |
 
-每个请求只应用与其身份阶段一致的错误：无效身份先于目标资源；目标不在调用者可见范围按 404；可见机构内角色不足按 403；格式合法但状态冲突按 409。当前基础 API 的所有实际错误仍见[既有契约](cloud-foundation.md)，本草案不改其检查顺序。
+每个请求只应用与其身份阶段一致的错误：无效身份先于目标资源；目标不在调用者可见范围按 404；可见机构内角色不足按 403；字段或枚举无效按 422；字段及目标状态均合法、但当前状态机不允许该迁移按 409。当前基础 API 的所有实际错误仍见[既有契约](cloud-foundation.md)，本草案不改其检查顺序。
 
 ## 8. 离线与历史边界
 

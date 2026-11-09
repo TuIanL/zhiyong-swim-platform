@@ -130,7 +130,7 @@ Session 不绑定单个 EdgeNode；同一 Session 可以汇集多设备的独立
 | derived_from_asset_id | UUID / 可空 | 仅派生资产填写；父 Asset 必须同 tenant/site/session 且 ready |
 | status | enum / 非空 | pending_upload 默认；服务端确认后 ready 或失败后 failed |
 | capture_started_at_utc, capture_ended_at_utc | UTC timestamp / 可空 | 仅当原始设备时间及其基准足以无歧义换算时填写；不以接收时间填充 |
-| device_capture_started_at_raw, device_capture_ended_at_raw | 原始字符串 / 可空 | 设备/采集端原样提供；保留原始精度与字面值，不能假定有时区 |
+| device_capture_started_at_raw, device_capture_ended_at_raw | 原始字符串 / 可空 | 设备/采集端原样提供；保留原始精度与字面值，不能假定有时区；API capture_metadata 使用完全相同的字段名 |
 | device_time_basis | enum / 非空 | utc、offset、iana_timezone、unknown；unknown 是显式状态，不猜测 UTC |
 | device_timezone | IANA timezone string / 可空 | 由设备或采集端报告；若使用 IANA 基准则必需并在实施时校验 |
 | device_utc_offset_minutes | signed integer / 可空 | 设备报告的 UTC 偏移；与时间基准一致；不由场馆时区代替 |
@@ -174,9 +174,11 @@ EdgeCredential 和 UploadSession 是完整契约说明所需的支持概念，�
 | Device | active ↔ disabled | disabled 后不得创建/确认新上传；历史 Asset 仍依 D3/D5 授权访问 |
 | TrainingSession | planned → recording → completed；planned/recording → cancelled | completed/cancelled 终态；计划态 started_at 可空；云端状态由获 S-manage 的用户路径推进 |
 | VideoAsset | pending_upload → ready 或 failed | ready/failed 终态；失败重试新逻辑 Asset ID；ready 内容不变 |
-| UploadSession | uploading → completing → completed/failed；uploading/completing → aborted/expired（具体竞态按云端事务结果收敛） | completed 重试返回原 Asset；failed/aborted/expired 不得完成；新采集意图创建新 Asset/UploadSession |
+| UploadSession | uploading → completing → completed/failed/aborted/expired；uploading → failed/aborted/expired | completed 与 Asset.ready 配对；failed/aborted/expired 与尚未 ready 的 Asset.failed 配对；所有终态不可逆，重试新建 Asset/UploadSession |
 
-取消与确认的事务先后必须明确：云端先接受 Session cancel，则对应未完成上传不可再把 Asset 置为 ready；若先完成并确认 Asset ready，随后 Session cancel 不删除该 Asset。Session completed 后允许合规补传但不回退 Session 状态。分片回执只证明分片传输，不证明整对象 ready。
+UploadSession 与 VideoAsset 的终态必须在同一数据库事务中配对更新：完整对象验证成功后才能原子提交 `UploadSession.completed + VideoAsset.ready`；校验失败提交 `failed + failed`，显式中止提交 `aborted + failed`，到期提交 `expired + failed`。尚未 ready 的资产不允许随着 UploadSession 进入终态而遗留在 pending_upload。UploadIntentCreate 也应原子创建 Asset 与 UploadSession。
+
+Session 取消、complete、abort 与 expiry 竞争时，对 Session、UploadSession、Asset 的检查和状态更新必须串行化或用条件更新确保仅一个合法事务获胜。若取消先获胜，所有未完成的关联上传以 `session_cancelled` 原因进入 UploadSession.failed，Asset 同事务进入 failed；之后 complete 返回 409。若 complete 的完整性确认先获胜，则原子提交 completed/ready，之后取消不得回退或删除该 Asset。若数据库事务提交失败，不能只提交其中一侧的终态；同一请求可安全重试并读取唯一最终结果。到期处理需要可重试地终结过期的 uploading/completing 会话，避免永久 pending_upload；对象存储残留清理仍按后续存储策略设计。Session completed 后允许合规补传但不回退 Session 状态。分片回执只证明分片传输，不证明整对象 ready。
 
 Edge 离线可生成临时本地 Session/采集记录并保留录像；恢复联网后可提交同步。云端仍是 Session 最终业务权威，本地临时 ID/状态/创建者声明不会直接覆盖云端记录。云边授权、ID 映射、重复检测与状态冲突协议另开 Change，本稿不定义 Outbox/Inbox 或同步算法。
 
