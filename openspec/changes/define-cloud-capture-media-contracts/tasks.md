@@ -25,8 +25,8 @@
 ## 4. 文档集成交付检查
 
 - [x] 4.1 对三份文档和既有接线做ERD↔字段↔约束↔状态↔权限↔API↔ADR交叉核对，并保存结果。验收：D1–D10、C1–C5及本轮定向审阅要求逐项有文档位置；重点核对同场馆coach互不可见未授权训练、单Asset授权不扩大范围、读取不等于管理、不同设备同SHA保留独立采集、云端权威与离线临时记录兼容、采集时间/时钟来源、Site/Tenant删除不抹历史；同时覆盖派生隔离、上传主体、完整性确认和幂等凭据例外，不用strict替代语义核对或把业务测试记为已运行。
-- [ ] 4.2 文档apply交付后运行change strict、主规格strict、相对链接和Git差异检查；检查Notion两项直接任务与本PR的阶段、提交/CI绑定、范围和回链。验收：真实命令/来源结果写入交付记录，proposal/design/tasks done且specs skipped；结构通过与内容核对分列；两项总体任务仍按自身范围，不以该文档子范围完成替代全平台完成。
-- [ ] 4.3 核对相对本change基线的全部交付文件（含新增/暂存），只允许本change规划/证据、三份文档及既有领域模型接线。验收：services、configs、scripts、.github、主规格及openapi.json与基线一致；预存docs/workflow与.workbuddy另外列出并保持原样、不纳入PR；发布到同一PR并读取当前head实际CI结果，不将旧PR或旧head结果外推。
+- [x] 4.2 文档apply交付后运行change strict、主规格strict、相对链接和Git差异检查；检查Notion两项直接任务与本PR的阶段、提交/CI绑定、范围和回链。验收：真实命令/来源结果写入交付记录，proposal/design/tasks done且specs skipped；结构通过与内容核对分列；两项总体任务仍按自身范围，不以该文档子范围完成替代全平台完成。
+- [x] 4.3 核对相对本change基线的全部交付文件（含新增/暂存），只允许本change规划/证据、三份文档及既有领域模型接线。验收：services、configs、scripts、.github、主规格及openapi.json与基线一致；预存docs/workflow与.workbuddy另外列出并保持原样、不纳入PR；发布到同一PR并读取当前head实际CI结果，不将旧PR或旧head结果外推。
 
 ## Workflow follow-up（2026-11-09）
 
