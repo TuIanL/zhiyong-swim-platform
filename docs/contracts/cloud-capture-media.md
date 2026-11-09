@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 6095)
-Total output lines: 192
-
 # 云端采集与媒体 API 契约草案
 
 > **v0.1-draft／未实现／无表无接口**
@@ -82,7 +79,42 @@ POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/playba
 | GET `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}` | 原发起用户且有 S-manage | 无 | 200 UploadSessionRead + 已确认分片 |
 | POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/part-urls` | 原发起用户且有 S-manage | PartUrlRequest | 200 PartUrlRead 数组 |
 | POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/complete` | 原发起用户且有 S-manage | CompleteRequest | 202 completing 或 200 completed + AssetRead |
-| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions…1095 tokens truncated…name, status, config_revision, applied_config_revision, last_seen_at, created_at, updated_at |
+| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/abort` | 原发起用户且有 S-manage | 无 | 204 |
+| POST `/api/v1/edge/heartbeat` | 有效 EdgeCredential，仅本节点 | HeartbeatRequest | 200 HeartbeatRead；仅上报本节点观测 |
+| POST `/api/v1/edge/sessions/{session_id}/upload-sessions` | 有效节点凭据；Session 同 tenant/site，Device 属于该节点且 active | EdgeUploadIntentCreate | 201 UploadIntentRead + 初始 AssetRead |
+| GET `/api/v1/edge/upload-sessions/{upload_session_id}` | 原发起节点、有效凭据 | 无 | 200 UploadSessionRead + 已确认分片 |
+| POST `/api/v1/edge/upload-sessions/{upload_session_id}/part-urls` | 原发起节点、有效凭据 | PartUrlRequest | 200 PartUrlRead 数组 |
+| POST `/api/v1/edge/upload-sessions/{upload_session_id}/complete` | 原发起节点、有效凭据 | CompleteRequest | 202 completing 或 200 completed + AssetRead |
+| POST `/api/v1/edge/upload-sessions/{upload_session_id}/abort` | 原发起节点、有效凭据 | 无 | 204 |
+
+首版不提供 Edge 全局结束 Session 的端点、不提供四实体 DELETE，也不提供 Edge 对其他节点上传的接管/完成/中止操作。Edge 只为自己发起的上传会话续传、查询和确认。
+
+## 4. 请求与响应字段
+
+所有新增请求对象建议拒绝未知字段。tenant_id、site_id、created_by、origin、source_edge_node_id、created_at、received_at、status 中由服务端决定的字段不能由调用方覆盖。UUID 格式沿现有基础 API 约定；具体长度限制在实现 Change 中定案。
+
+| 请求模型 | 字段 | 来源和校验 |
+| --- | --- | --- |
+| EdgeNodeCreate | name | Owner/Admin 提供；tenant/site 从路径确定 |
+| EdgeNodePatch | name?, status? | 仅可变字段；pending/active/disabled 转换遵守 ADR 0003 |
+| CredentialCreate | expires_at? | 凭据有效期策略待实施定案；不得请求密钥值 |
+| DeviceCreate | edge_node_id, name, kind, hardware_serial? | 节点必须属于路径 Site/Tenant 且 active；hardware_serial 不作为认证 |
+| DevicePatch | name?, status? | 不接受 tenant/site/edge_node_id 迁移 |
+| SessionCreate | title? | created_by_user_id/status/时间由云端产生；创建默认 planned |
+| SessionPatch | title?, status? | 只有 S-manage；仅修改 title 合法；status 可省略，若提供须为非空有效枚举并满足状态机；至少提供一个可写字段，空 PATCH 返回 422；不接受归属、creator 或历史时间字段 |
+| GrantPut | expires_at? | 目标 Coach 必须是本机构成员并具该 Site 访问权；物理授权记录模型待定 |
+| UploadIntentCreate | expected_size_bytes, expected_sha256, media_type, capture_metadata | 人工来源；initiator/creator 由登录身份写入；Asset pending_upload |
+| EdgeUploadIntentCreate | device_id, expected_size_bytes, expected_sha256, media_type, capture_metadata | origin=edge/source_node 由凭据解析；device 必属该 node/Site；不接受自报另一来源 |
+| capture_metadata | device_capture_started_at_raw?, device_capture_ended_at_raw?, device_time_basis, device_timezone?, device_utc_offset_minutes?, video_timebase_kind, video_timebase_metadata?, device_clock_source, device_clock_offset_ms?, device_clock_accuracy_ms? | 与领域模型字段同名；原始设备时间与服务端时间分开；unknown 显式表示；不根据 Site 时区猜设备时区 |
+| PartUrlRequest | part_numbers[] | 编号唯一、正数且在实现限制内；签名只对应指定对象/分片 |
+| CompleteRequest | parts[{part_number,etag}] | 逐项与服务端记录核对；客户端回执不是完整性证明 |
+| HeartbeatRequest | reported_config_revision?, health?, observed_at_raw? | 只更新本节点观测；不能改节点身份/权限/Session 状态 |
+
+新列表只对 Session 与 Asset 固定建议的游标规则：按不可变 (created_at,id) 升序/降序之一，具体方向在实现时固定；planned Session 的 started_at 可空，不作为排序键。limit 建议默认 20、上限 100。游标应绑定 tenant/site、筛选条件和排序版本；每次续页重新检查当前身份、grant 和资源过滤，旧游标不绕过撤权。先过滤可见资源再形成 page 和 next_cursor。节点/设备列表当前不承诺分页，避免扩张为全 API 分页改造。
+
+| 读取模型 | 主要响应字段 |
+| --- | --- |
+| EdgeNodeRead | id, tenant_id, site_id, name, status, config_revision, applied_config_revision, last_seen_at, created_at, updated_at |
 | DeviceRead | id, tenant_id, site_id, edge_node_id, name, kind, status, hardware_serial, created_at, updated_at |
 | SessionRead | id, tenant_id, site_id, created_by_user_id, title, status, started_at, completed_at, cancelled_at, created_at, updated_at |
 | AssetRead | id, tenant_id, site_id, session_id, origin, creator/source IDs, derived_from_asset_id, status, capture_metadata（含与创建请求同名的 device_capture_started_at_raw / device_capture_ended_at_raw）, received_at, media_type, size_bytes, checksum_sha256, created_at, updated_at |
