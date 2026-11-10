@@ -305,6 +305,17 @@ def test_heartbeat_retries_health_bounds_and_failures_do_not_change_admin_status
     assert before == after and status == "active"
     oversized = client.post("/api/v1/edge/heartbeat", headers=headers, json={"observed_at_raw": "x" * 129})
     assert oversized.status_code == 422
-    app.state.clock = lambda: now + timedelta(seconds=152)
+    # Model a client that retries a request whose response was lost. The retry
+    # budget is finite (three attempts) and each accepted request is rechecked
+    # against the same Edge identity; no Runtime retry loop ships in this Change.
+    simulated_retry_times = (64, 66, 69)
+    for retry_time in simulated_retry_times:
+        app.state.clock = lambda retry_time=retry_time: now + timedelta(seconds=retry_time)
+        retried = client.post("/api/v1/edge/heartbeat", headers=headers, json=body)
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["online"] is True
+    assert len(simulated_retry_times) == 3
+    assert client.get(f"{world['nodes']}/{node['id']}", headers=owner).json()["status"] == "active"
+    app.state.clock = lambda: now + timedelta(seconds=159)
     assert client.get(f"{world['nodes']}/{node['id']}", headers=owner).json()["online"] is False
     assert client.get(f"{world['nodes']}/{node['id']}", headers=owner).json()["status"] == "active"

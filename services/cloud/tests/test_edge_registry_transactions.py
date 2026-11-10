@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 
 from pg_support import run_concurrently
+from swimplatform.config import Settings
+from swimplatform.main import create_app
 from swimplatform.models import Device, EdgeCredential, EdgeNode, IdempotencyRecord
 
 pytestmark = pytest.mark.postgresql
@@ -210,3 +212,53 @@ def test_disable_transaction_rolls_back_node_and_credential_when_revoke_fails(re
     with pg_environment.admin(concurrency_database.name) as admin:
         admin.execute("DROP TRIGGER reject_credential_revoke ON swim_cloud.edge_credentials")
         admin.execute("DROP FUNCTION swim_cloud.reject_credential_revoke()")
+
+
+@pytest.mark.parametrize("zone", ["UTC", "Asia/Shanghai"])
+def test_edge_credential_expiry_is_absolute_utc_in_each_database_timezone(zone, pg_databases, seeded_account):
+    """PostgreSQL session timezone must not shift the credential's expiry instant."""
+    from datetime import UTC, datetime, timedelta
+
+    database = pg_databases(timezone=zone)
+    application = create_app(Settings(database_url=database.app_url))
+    zone_key = zone.lower().replace("/", "-")
+    try:
+        _owner, headers = seeded_account(f"edge-zone-{zone}", application=application)
+        deadline = datetime(2030, 6, 1, tzinfo=UTC)
+        application.state.clock = lambda: deadline - timedelta(days=7)
+        with TestClient(application) as client:
+            tenant_response = client.post("/api/v1/tenants", headers=headers,
+                                          json={"name": "Timezone", "slug": f"edge-zone-{zone_key}"})
+            assert tenant_response.status_code == 201, tenant_response.text
+            tenant = tenant_response.json()
+            site_response = client.post(f"/api/v1/tenants/{tenant['id']}/sites", headers=headers,
+                                        json={"name": "Timezone Site"})
+            assert site_response.status_code == 201, site_response.text
+            site = site_response.json()
+            prefix = f"/api/v1/tenants/{tenant['id']}/sites/{site['id']}"
+            node_response = client.post(f"{prefix}/edge-nodes", headers={**headers, "Idempotency-Key": f"node-zone-{zone_key}"},
+                                        json={"name": "Timezone Node"})
+            assert node_response.status_code == 201, node_response.text
+            node = node_response.json()
+            credential_response = client.post(
+                f"{prefix}/edge-nodes/{node['id']}/credentials",
+                headers={**headers, "Idempotency-Key": f"credential-zone-{zone_key}"},
+                json={"expires_at": deadline.isoformat()},
+            )
+            assert credential_response.status_code == 201, credential_response.text
+            credential = credential_response.json()
+            assert datetime.fromisoformat(credential["expires_at"]).astimezone(UTC) == deadline
+            assert client.patch(f"{prefix}/edge-nodes/{node['id']}", headers=headers,
+                                json={"status": "active"}).status_code == 200
+            heartbeat_headers = {"Authorization": f"Bearer {credential['token']}"}
+            application.state.clock = lambda: deadline - timedelta(microseconds=1)
+            before = client.post("/api/v1/edge/heartbeat", headers=heartbeat_headers, json={})
+            assert before.status_code == 200, before.text
+            application.state.clock = lambda: deadline
+            exact = client.post("/api/v1/edge/heartbeat", headers=heartbeat_headers, json={})
+            assert exact.status_code == 401, exact.text
+            application.state.clock = lambda: deadline + timedelta(microseconds=1)
+            after = client.post("/api/v1/edge/heartbeat", headers=heartbeat_headers, json={})
+            assert after.status_code == 401, after.text
+    finally:
+        application.state.engine.dispose()
