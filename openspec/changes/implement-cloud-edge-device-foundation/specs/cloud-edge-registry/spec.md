@@ -45,19 +45,26 @@
 - **THEN** 多台camera MUST 可取得独立通用Device ID，不限制为一Edge一Device；当前未支持kind MUST 返回422，未来类型 SHALL 通过独立领域/协议扩展，不更换既有Device ID或归属模型
 
 ### Requirement: Independent revocable edge credentials
-节点认证 SHALL 独立于User会话并只授权本节点heartbeat。D12凭据明文 SHALL 仅在签发成功响应返回一次；普通读取、数据库、幂等记录和日志 MUST 不包含明文，读取响应也 MUST NOT 暴露摘要。默认有效期 SHALL 为7天，显式expires_at SHALL 晚于服务端当前UTC且不超过签发时刻30天；到达expires_at或被撤销的凭据 MUST 被拒绝。服务 MUST NOT 自动续期、因心跳/离线延长有效期或恢复已撤销凭据；替换凭据 SHALL 通过受控重新签发，自动轮换服务和离线身份恢复协议不在本Change。
-
-#### Scenario: Issue and revoke
-- **WHEN** Owner/Admin签发凭据、列举凭据并随后撤销，再以该凭据发heartbeat
-- **THEN** 仅签发响应 MUST 含secret；列表/撤销不含secret/hash；撤销后heartbeat MUST 返回401且不更新观测，重复合法撤销 MUST 返回204
+Edge凭据 MUST 与User会话分离，只授权所属Node的heartbeat，并使用`Authorization: Bearer swim_edge_<opaque-token>`。User与Edge凭据 MUST NOT 互用。
 
 #### Scenario: User and node identity separation
 - **WHEN** User token用于Edge heartbeat，或Edge token用于用户节点管理/既有基础API
 - **THEN** 服务 MUST 返回401，节点凭据 MUST NOT 通过用户身份路径获得成员权限
 
+### Requirement: Bounded credential lifecycle
+D12凭据默认有效期为7天、最长30天，以服务端UTC判断到期。明文 MUST 仅在成功签发响应中返回一次；数据库、普通读取、日志和幂等记录 MUST 不保存明文，普通读取也 MUST NOT 暴露摘要。过期/撤销凭据 MUST 被拒绝；服务 MUST NOT 自动续期、复活撤销凭据或提供自动轮换和离线恢复协议。
+
+#### Scenario: Issue and revoke
+- **WHEN** Owner/Admin签发凭据、列举凭据并随后撤销，再以该凭据发heartbeat
+- **THEN** 仅签发响应 MUST 含secret；列表/撤销不含secret/hash；撤销后heartbeat MUST 返回401且不更新观测，重复合法撤销 MUST 返回204
+
 #### Scenario: Credential deadline and timezone
 - **WHEN** 在UTC及Asia/Shanghai连接配置下分别请求截止前、恰好截止和截止后的相同绝对时刻
 - **THEN** 截止前且Node active的请求 MUST 可通过；恰好截止及之后 MUST 返回401；重启或连接复用 MUST NOT 恢复过期/撤销凭据
+
+#### Scenario: Credential lifecycle audit boundary
+- **WHEN** 有权User签发或首次撤销某EdgeCredential
+- **THEN** 持久化凭据历史 MUST 记录签发/撤销User及服务端时间；相关User外键使用RESTRICT，普通读取不返回token摘要，应用日志不记录Authorization头或secret，撤销重放不得覆盖首次撤销主体/时间；本记录不扩展为通用审计事件系统
 
 #### Scenario: Long disconnected edge needs controlled reissue
 - **WHEN** Node连续离线35天后使用原凭据重新连接云端，即使其行政状态仍active

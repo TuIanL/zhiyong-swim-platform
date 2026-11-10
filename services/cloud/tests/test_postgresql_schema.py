@@ -1,4 +1,4 @@
-"""PostgreSQL 六表迁移、schema 落点与约束验证（design D3）。
+"""PostgreSQL 六表基线及十表head迁移、schema落点与约束验证。
 
 全部用例只在专用可销毁实例上运行；每个用例使用独立空库。
 """
@@ -20,14 +20,16 @@ from pg_support import SCHEMA
 
 pytestmark = pytest.mark.postgresql
 
-REVISION = "20261106_0001"
+BASE_REVISION = "20261106_0001"
+REVISION = "20261110_0002"
 TABLES = {"users", "auth_sessions", "tenants", "tenant_memberships", "sites", "site_memberships"}
+REGISTRY_TABLES = {"edge_nodes", "devices", "edge_credentials", "idempotency_records"}
 
 
 def alembic_config(url: str) -> Config:
     """与 swimplatform.migrate 相同的定位方式；仅测试需要 downgrade 入口。"""
     config = Config()
-    config.set_main_option("script_location", str(ROOT / "services/cloud/migrations"))
+    config.set_main_option("script_location", str(ROOT / "services/cloud/src/swimplatform/migrations"))
     config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     return config
 
@@ -60,7 +62,7 @@ def test_revision_and_version_table_live_in_dedicated_schema(pg_databases):
                     "SELECT table_schema FROM information_schema.tables "
                     "WHERE table_name = ANY(:names)"
                 ),
-                {"names": sorted(TABLES | {"alembic_version"})},
+                {"names": sorted(TABLES | REGISTRY_TABLES | {"alembic_version"})},
             ).scalars().all()
             assert set(locations) == {SCHEMA}
             public_tables = connection.execute(
@@ -76,7 +78,7 @@ def test_six_tables_columns_and_nullability(pg_databases):
     engine = create_engine(database.migration_url)
     try:
         inspector = inspect(engine)
-        assert set(inspector.get_table_names()) == TABLES | {"alembic_version"}
+        assert TABLES | REGISTRY_TABLES | {"alembic_version"} == set(inspector.get_table_names())
 
         expected = {
             "users": [
@@ -189,6 +191,44 @@ def test_migration_matches_models_after_reflection(pg_databases):
             assert compare_metadata(MigrationContext.configure(connection), Base.metadata) == []
     finally:
         engine.dispose()
+
+
+def test_incremental_revision_preserves_base_data_and_can_downgrade_to_base(pg_databases, pg_environment):
+    database = pg_databases()
+    config = alembic_config(database.migration_url)
+    seed_engine = create_engine(database.app_url)
+    try:
+        with seed_engine.begin() as connection:
+            seed(connection)
+            connection.execute(text(
+                "INSERT INTO sites (id,tenant_id,name,address,timezone,created_at) "
+                "VALUES ('s-2','t-1','s-2','','UTC',now())"
+            ))
+    finally:
+        seed_engine.dispose()
+
+    command.downgrade(config, BASE_REVISION)
+    assert table_names(database.migration_url) == TABLES | {"alembic_version"}
+    base_engine = create_engine(database.migration_url)
+    try:
+        with base_engine.connect() as connection:
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == BASE_REVISION
+            assert connection.execute(text("SELECT count(*) FROM users")).scalar_one() == 1
+            assert connection.execute(text("SELECT count(*) FROM sites")).scalar_one() == 2
+    finally:
+        base_engine.dispose()
+
+    migrate_database(database.migration_url)
+    pg_environment.grant_application(database)
+    assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
+    head_engine = create_engine(database.app_url)
+    try:
+        with head_engine.connect() as connection:
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == REVISION
+            assert connection.execute(text("SELECT count(*) FROM users")).scalar_one() == 1
+            assert connection.execute(text("SELECT count(*) FROM sites")).scalar_one() == 2
+    finally:
+        head_engine.dispose()
 
 
 SEED = [
@@ -338,7 +378,7 @@ def test_downgrade_and_upgrade_roundtrip(pg_databases, pg_environment):
     migrate_database(database.migration_url)
     # 迁移脚本不管理对象权限：重建表后必须重新授权，这一点在验证报告中如实记录。
     pg_environment.grant_application(database)
-    assert table_names(database.migration_url) == TABLES | {"alembic_version"}
+    assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
 
     application = create_app(Settings(database_url=database.app_url))
     try:
@@ -383,7 +423,34 @@ def test_interrupted_migration_rolls_back_ddl_and_version(pg_databases):
 
         # 移除冲突对象后可以正常升级，说明失败没有留下不可恢复状态。
         migrate_database(database.migration_url)
-        assert table_names(database.migration_url) == TABLES | {"alembic_version"}
+        assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
+    finally:
+        admin_engine.dispose()
+
+
+def test_interrupted_registry_migration_rolls_back_new_ddl_and_keeps_base_revision(pg_databases):
+    database = pg_databases(migrate=False, grant=False)
+    config = alembic_config(database.migration_url)
+    command.upgrade(config, BASE_REVISION)
+    admin_engine = create_engine(database.admin_url)
+    try:
+        with admin_engine.begin() as connection:
+            # Force failure after edge_nodes has been created inside the new migration.
+            connection.execute(text("CREATE TABLE swim_cloud.devices (id text PRIMARY KEY)"))
+        with pytest.raises(Exception):
+            migrate_database(database.migration_url)
+        assert table_names(database.migration_url) == TABLES | {"devices", "alembic_version"}
+        with admin_engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM swim_cloud.alembic_version")
+            ).scalar_one() == BASE_REVISION
+            assert connection.execute(
+                text("SELECT to_regclass('swim_cloud.edge_nodes') IS NULL")
+            ).scalar_one()
+        with admin_engine.begin() as connection:
+            connection.execute(text("DROP TABLE swim_cloud.devices"))
+        migrate_database(database.migration_url)
+        assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
     finally:
         admin_engine.dispose()
 

@@ -2,7 +2,7 @@
 
 ## Context
 
-动机与唯一实施范围见[proposal](proposal.md)，路线与决策补录见[全项目审计](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。负责人已确认本Change为首项业务主线及D11–D13；F1–F8中其余实施细化仍待最终审阅。ADR0003 D1–D10及本轮决策均不等于已获Apply授权或业务已实现。
+动机与唯一实施范围见[proposal](proposal.md)，路线与决策补录见[全项目审计](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。负责人已确认本Change为首项业务主线及D11–D13，并授权基于PR #4 head 334f589b66e22dc55716f5e6befb44d31e003cd1 进入Apply。ADR0003 D1–D10及D11–D13仍是设计输入，不能被误报为已实现。
 
 main@d7f1eed只有六表、19操作。[api.py](../../../services/cloud/src/swimplatform/api.py)已有identity/membership/manager/site_access和UTC瞬间归一逻辑；[models.py](../../../services/cloud/src/swimplatform/models.py)有Site复合唯一键；[PG schema测试](../../../services/cloud/tests/test_postgresql_schema.py)固定六表，现有[pg_support](../../../services/cloud/tests/pg_support.py)授权使用ALL TABLES语句。新增表时必须改为批准集合并扩展断言，不能删除六表回归或沿用自动授权任意表。
 
@@ -30,7 +30,7 @@ main@d7f1eed只有六表、19操作。[api.py](../../../services/cloud/src/swimp
 | --- | --- |
 | edge_nodes | id、tenant_id/site_id、name(1–120)、status(pending/active/disabled，默认pending)、config_revision(默认1)、applied_config_revision(可空非负int)、created_by_user_id、last_seen_at/最近health/observed_at_raw(可空)、credential_generation(默认0)、created_at/updated_at；UNIQUE(tenant_id,site_id,id)，复合FK→sites(tenant_id,id) |
 | devices | id、tenant_id/site_id/edge_node_id、name(1–120)、kind(camera)、status(active/disabled，默认active)、hardware_serial(可空，最长120)、created_at/updated_at；UNIQUE(tenant_id,site_id,edge_node_id,id)，复合FK→edge_nodes |
-| edge_credentials | id、tenant_id/site_id/edge_node_id、generation、token_hash(唯一)、issued_at/expires_at/revoked_at(可空)；复合FK→edge_nodes；不存secret |
+| edge_credentials | id、tenant_id/site_id/edge_node_id、generation、token_hash(唯一)、issued_at/expires_at/revoked_at(可空)、issued_by_user_id/revoked_by_user_id(可空)；复合FK→edge_nodes，用户外键RESTRICT；不存secret |
 | idempotency_records | id、tenant_id/site_id/user_id、operation、target_id、key_hash、request_hash、resource_kind/resource_id、created_at；UNIQUE(tenant_id,site_id,user_id,operation,target_id,key_hash)；不存完整请求/响应或secret |
 
 新增父级FK使用RESTRICT，不沿用六表CASCADE；Node/Device没有删除入口，迁场馆重新登记。身份引用指向User，不指向TenantMembership，避免成员撤销被登记记录阻止；现有无新引用的六表级联语义保留。幂等的多类型resource引用由写服务核对并与实际资源同事务提交，不冒充多态FK自动约束。
@@ -64,9 +64,11 @@ Owner/Admin不依赖显式SiteMembership；Coach/Athlete无节点/设备读取�
 
 ### F3 凭据与行政生命周期
 
-采用高熵不透明token（至少256位随机量，Edge命名空间前缀）+摘要；不使用机器人User或用户会话，不在此引入mTLS/证书发行栈。Bearer承载方式可共用HTTP机制，认证查询空间与权限必须分离。
+采用高熵不透明token（至少256位随机量，Edge命名空间前缀）+摘要；不使用机器人User或用户会话，不在此引入mTLS/证书发行栈。请求头固定为 Authorization: Bearer swim_edge_<opaque-token>，仅heartbeat路由接受Edge凭据；User bearer只查AuthSession，不能互用。日志不记录Authorization头或token。
 
 按已确认D12，expires_at可省略，默认服务端签发时UTC+7天；提供时必须晚于服务端当前时刻且不超过签发时刻30天。截止恰好命中即拒绝，复用as_utc语义，UTC/Asia时区变体隔离配置。Credential可在pending/active/disabled节点签发，但pending/disabled一律不能用它heartbeat；普通查询不含secret/hash。明文只在成功签发时返回一次，数据库/普通读取/日志/幂等记录不得出现明文；重试不重放secret。撤销不可恢复，不能清空revoked_at使旧钥复活；只能由有权管理员重新签发。
+
+本Change的凭据操作审计边界是保留credential生命周期行：issued_by_user_id/issued_at与首次revoked_by_user_id/revoked_at可追溯到执行管理员；这些User外键RESTRICT，避免历史事件因账号删除级联消失。当前不建通用audit/event表，不保存请求IP、完整请求体、token明文或token摘要到API响应/日志；数据库仅保存用于验证的token摘要。
 
 Node pending→active、pending/active→disabled、disabled→active；同状态PATCH为无副作用重试，非法回pending为409。停用在同事务锁定Node、generation递增、撤销所有当前凭据；恢复必须有停用后新generation有效凭据。disabled时先签新凭据再显式激活，不形成“只能active签发而恢复又需新凭据”的死循环。active节点的有权管理员可手动先签新凭据再撤旧；这是现有签发/撤销操作的人工组合，不是自动续期或自动轮换服务。成功心跳不延长expires_at，离线也不冻结或无限延长有效期。
 
@@ -88,7 +90,7 @@ Idempotency-Key为8–128字符可打印ASCII受限集合。作用域含当前Te
 
 成功资源与幂等行同事务；唯一约束裁定并发，冲突回滚后重新读已提交结果。Node/Device重试返回201与原ID的当前可见状态；同键异参409；每次先做当前授权，降权后不能重放。凭据同键重试只返回409+credential_id，不缓存明文、再次签发或用加密缓存绕过“一次返回”边界；响应丢失时管理员查询/撤销后用新键重签。
 
-本片不自动过期/淘汰幂等记录，保证重启/较晚重试不产生重复；记录只有最小摘要，不存视频或完整请求。生产容量和回收策略是后续独立评审门槛，不把24小时后悄悄复用旧键作为实现捷径。新行为的保留取舍已明确写在本提案，未获批准前不Apply。
+本片不自动过期/淘汰幂等记录，保证重启/较晚重试不产生重复；记录只有最小摘要，不存视频或完整请求。生产容量和回收策略是后续独立评审门槛，不把24小时后悄悄复用旧键作为实现捷径。负责人已批准此行为；本片按其范围实现并通过两后端测试验证。
 
 ### F6 与既有规格及测试基线衔接
 
@@ -98,7 +100,7 @@ cloud-identity两个MODIFIED块完整保留原场景；原基础revision20261106
 
 ### F7 代码与包边界
 
-未来Apply在services/cloud新增独立registry/Edge路由与认证服务，复用当前identity/manager/site_access、数据库事务与security摘要工具，不复制一套用户注册或跨项目import。更新OpenAPI快照和域文档时逐项标出本片12个已实现，PR3剩余21个操作仍未来；不把整篇v0.1文档改成“全部实现”。新增迁移与模块应包含在wheel中并验证独立安装路径；不通过测试源码路径掩盖安装缺失。
+本片在services/cloud新增独立registry/Edge路由与认证服务，复用当前identity/manager/site_access、数据库事务与security摘要工具，不复制一套用户注册或跨项目import。OpenAPI快照和域文档逐项标出本片12个已实现，Session/Asset/Upload等仍未来；不把整篇v0.1文档改成“全部实现”。递增迁移和模块随wheel发布，并通过独立安装路径验证；不通过测试源码路径掩盖安装缺失。
 
 ### F8 来源与本片的偏差清单
 
@@ -107,7 +109,7 @@ cloud-identity两个MODIFIED块完整保留原场景；原基础revision20261106
 | D1/D2/D9 | 实施Node/Device固定归属、RESTRICT和停用历史；Asset等未来来源未建表 |
 | D3 | 仅Owner/Admin管理和独立Edge身份；不实施Coach媒体grant/学员关系 |
 | D4/D5/D6/D7/D10 | Session/Asset/上传/采集时间/离线协议不实施；不以通用幂等替代采集身份 |
-| D8 | 复用11个管理操作+heartbeat；字段/长度等实施细化仍待审，期限和30秒/90秒已由D12/D13确认；不改现有19操作 |
+| D8 | 复用11个管理操作+heartbeat；字段/长度按本Change实现；期限和30秒/90秒由D12/D13确认；不改现有19操作 |
 | D11 | camera是随车移动的摄像头Device；一机一车为物理关系，不建Cart资源，不把kind/ID设计封死为不可扩展 |
 | D12 | 7天默认/30天最长、一次性明文、不可恢复撤销、服务端UTC；长离线恢复仅作后续议题 |
 | D13 | 30秒发送/90秒窗口及服务端last_seen_at，响应说明策略、有限重试不改行政状态，不作SLA |
@@ -119,7 +121,7 @@ cloud-identity两个MODIFIED块完整保留原场景；原基础revision20261106
 - 迁移后角色权限丢失 → 测试夹具在roundtrip后重新按批准表集合授权；迁移脚本不冒充生产角色部署。
 - 行锁/唯一冲突处理在两后端有差异 → 共享行为测试+PG独立连接实测，超时/串行单连接不能冒充并发通过。
 - 永久幂等摘要增长、短凭据需轮换、在线只反映最近通信 → 作为开发切片明确限制，生产容量/轮换自动化和监控另评审；本片不部署生产。
-- D11–D13已确认但未获Apply授权，其他实施细化仍待审 → 按本次已确认决策收口Propose，不从已归档文档或主线确认推导实现授权。
+- D11–D13已确认并由负责人按PR #4批准head授权Apply；其他实施细化依照本Change验收和实现证据落实。
 
 ## Future Considerations / Known Limitations
 
@@ -130,7 +132,7 @@ cloud-identity两个MODIFIED块完整保留原场景；原基础revision20261106
 
 ## Migration Plan
 
-1. 仅在明确Apply后新增递增revision；不改20261106_0001，不连旧库/生产库。隔离库升级保留六表原数据，新建4表、约束/索引、版本标记。
+1. 基于明确Apply授权新增递增revision；不改20261106_0001，不连旧库/生产库。隔离库升级保留六表原数据，新建4表、约束/索引、版本标记。
 2. 验证空库base→head、含六表数据base→head、head→基础revision→head、受控失败回滚；删除新表仅用于隔离测试降级，原六表数据必须保留。
 3. 用应用身份实测正常CRUD与禁止权限、容器实际归属与精确清理；增加新测试包/迁移安装验证。
-4. 更新真实模型/API/文档、PR/Notion局部证据。通过独立Verify后按各阶段授权再Archive/主规格同步选择/Merge；本轮止于Propose。
+4. 更新真实模型/API/文档、PR/Notion局部证据。Apply结束后停止；独立Verify、Archive、主规格同步选择与Merge各按后续授权推进。

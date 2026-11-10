@@ -18,6 +18,9 @@ dev = ["pytest==9.0.3", "httpx==0.28.1"]
 [tool.setuptools.packages.find]
 where = ["services/cloud/src"]
 
+[tool.setuptools.package-data]
+swimplatform = ["migrations/script.py.mako"]
+
 [tool.pytest.ini_options]
 testpaths = ["services/cloud/tests"]
 pythonpath = ["services/cloud/src"]

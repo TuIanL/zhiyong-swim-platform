@@ -1,8 +1,8 @@
 # 云端采集与媒体领域模型
 
-> **v0.1-draft／未实现／无表无接口**
+> **v0.1-draft／部分实现**
 >
-> 本文记录负责人于 2026-11-09 第二轮 Proposal 技术审阅通过的设计方向，供后续业务实施 Change 作为已评审输入；它不是可执行 DDL、数据库架构批准或已上线能力。四实体、支持概念、授权关系及 API 均未实现。
+> 本文记录负责人于 2026-11-09 第二轮 Proposal 技术审阅通过的设计方向。EdgeNode、Camera Device、EdgeCredential已由implement-cloud-edge-device-foundation增量实现；TrainingSession、VideoAsset、UploadSession、授权关系与媒体API仍未实现。其他未来设计仍须由各自业务Change实现。
 
 - OpenSpec Change：**define-cloud-capture-media-contracts**
 - Proposal 基线：**main@afb0e5fce4c187c8d3c3d5607d2a675375c2a04d**
@@ -11,9 +11,9 @@
 
 ## 1. 范围与当前事实
 
-本草案设计 EdgeNode、Device、TrainingSession、VideoAsset 四个未来实体，并为解释节点凭据与分片上传描述 EdgeCredential、UploadSession 两个支持概念。训练编排、学员档案及关系、分析任务/结果、对象存储选型、离线同步协议、RLS、生产部署均不在范围内。
+本草案原先设计EdgeNode、Device、TrainingSession、VideoAsset四个实体。EdgeNode、Camera Device与EdgeCredential现由独立Change实现；TrainingSession、VideoAsset、UploadSession仍是未来设计。训练编排、学员档案及关系、分析任务/结果、对象存储选型、离线同步协议、RLS、生产部署均不在范围内。
 
-当前已实现的云端身份基线仍为六表：users、auth_sessions、tenants、tenant_memberships、sites、site_memberships；现有基础 API 为 14 paths / 19 operations。来源与历史证据见[当前云端领域模型](cloud-domain-model.md)、[基础 API 契约](../contracts/cloud-foundation.md)和[RBAC 契约](../contracts/cloud-rbac.md)。下列图、字段、键、索引、状态和端点均是未实施的设计方向，不应误读为这些表或接口已存在。
+当前已实现的云端包含初始六表以及Edge Registry四表；API为21 paths / 31 operations，其中基础身份19个，Edge Registry新增12个。Edge实现细节见[Cloud Edge Registry模型](cloud-edge-registry-domain.md)与[Registry API契约](../contracts/cloud-edge-registry.md)。本文中的TrainingSession、VideoAsset、UploadSession、授权及媒体存储图/字段/端点仍是未实施设计方向。
 
 ## 2. 概念 ERD 与基数
 
@@ -21,7 +21,7 @@
 erDiagram
     TENANTS ||--o{ SITES : contains
     SITES ||--o{ EDGE_NODES : registers
-    EDGE_NODES ||--o{ DEVICES : controls
+    EDGE_NODES ||--o{ DEVICES : registers
     EDGE_NODES ||--o{ EDGE_CREDENTIALS : authenticates
     SITES ||--o{ TRAINING_SESSIONS : hosts
     TRAINING_SESSIONS ||--o{ VIDEO_ASSETS : contains
@@ -32,7 +32,7 @@ erDiagram
     USERS o|--o{ VIDEO_ASSETS : user_creator
 ~~~
 
-Tenant、Site、User 是当前六表中的既有实体；本 Change 不改动其表结构。ERD 中的 EdgeCredential 与 UploadSession 是未来支持记录。Session/Asset 读取授权是权限语义叠加在资源上的概念关系，**不是本 Change 新增的实体或授权表**。
+Tenant、Site、User是既有实体；本Change不改动其表结构。EdgeNode、Device和EdgeCredential已有独立增量实现；本草案中其余实体与UploadSession仍是未来设计。Session/Asset读取授权是权限语义叠加在资源上的概念关系，**不是已建表或现有API**。
 
 | 关系 | 基数与必选性 | 推荐归属约束 |
 | --- | --- | --- |
@@ -98,7 +98,7 @@ Tenant、Site、User 是当前六表中的既有实体；本 Change 不改动其
 | id | UUID / 非空 | 云端生成；物理设备迁移/重新登记时新 ID |
 | tenant_id, site_id, edge_node_id | UUID / 非空 | 由已验证路径/节点决定；复合引用同一 EdgeNode |
 | name | string / 非空 | Owner/Admin 提供 |
-| kind | enum/string / 非空 | 初始至少可描述 camera；扩展设备类别需另评审 |
+| kind | enum/string / 非空 | 当前Registry只接受camera；其他设备类型须另行扩展与评审 |
 | status | enum / 非空 | active 默认；Owner/Admin 启停 |
 | hardware_serial | string / 可空 | Owner/Admin 登记；不是来源授权凭据，也不默认全局唯一 |
 | created_at, updated_at | UTC timestamp / 非空 | 云端生成 |

@@ -17,7 +17,7 @@ def main():
         raise SystemExit("拒绝：数据库路径不在新版 var/ 目录内")
     target.parent.mkdir(parents=True, exist_ok=True)
     migrate_database(str(url))
-    print("新版本地开发库已初始化，head=20261106_0001")
+    print("新版本地开发库已初始化，head=20261110_0002")
 
 
 if __name__ == "__main__":

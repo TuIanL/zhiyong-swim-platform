@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import psycopg
 import pytest
 
-from pg_support import ADMIN_USER, APP_USER, MIGRATION_USER, SCHEMA
+from pg_support import ADMIN_USER, APP_USER, APPROVED_APP_TABLES, MIGRATION_USER, SCHEMA
 
 pytestmark = pytest.mark.postgresql
 
@@ -62,10 +62,10 @@ def test_application_role_attributes_and_no_migration_membership(pg_environment,
             (APP_USER,),
         ) == 0
 
-        # 六张业务表加版本表共 7 张，全部归迁移身份所有。
+        # 十张批准业务表加版本表共 11 张，全部归迁移身份所有。
         assert connection.execute(
             "SELECT tableowner FROM pg_tables WHERE schemaname = %s", (SCHEMA,)
-        ).fetchall() == [(MIGRATION_USER,)] * 7
+        ).fetchall() == [(MIGRATION_USER,)] * (len(APPROVED_APP_TABLES) + 1)
         assert scalar(
             connection,
             "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = %s",
@@ -131,7 +131,7 @@ def test_application_cannot_write_migration_version_table(pg_environment, pg_dat
     with app_connection(pg_environment, database) as connection:
         with denied(connection, statement):
             pass
-        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261106_0001"
+        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261110_0002"
 
 
 @pytest.mark.parametrize(
@@ -160,7 +160,7 @@ def test_application_can_use_business_tables_and_read_version(pg_environment, pg
         connection.execute("UPDATE users SET display_name = 'U2' WHERE id = 'u-1'")
         connection.commit()
         assert scalar(connection, "SELECT display_name FROM users WHERE id = 'u-1'") == "U2"
-        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261106_0001"
+        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261110_0002"
         connection.execute("DELETE FROM users WHERE id = 'u-1'")
         connection.commit()
         assert scalar(connection, "SELECT count(*) FROM users") == 0
@@ -173,3 +173,15 @@ def test_public_schema_is_closed_to_application(pg_environment, pg_databases):
             pass
         with denied(connection, "SELECT * FROM public.alembic_version"):
             pass
+
+
+def test_unapproved_canary_table_is_not_granted_dml(pg_environment, pg_databases):
+    database = pg_databases()
+    with pg_environment.admin(database.name) as admin:
+        admin.execute("CREATE TABLE swim_cloud.unapproved_canary (id integer PRIMARY KEY)")
+    with pg_environment.application(database.name) as app_connection:
+        with denied(app_connection, "SELECT * FROM unapproved_canary"):
+            pass
+        with denied(app_connection, "INSERT INTO unapproved_canary (id) VALUES (1)"):
+            pass
+        assert app_connection.execute("SELECT count(*) FROM edge_nodes").fetchone()[0] == 0

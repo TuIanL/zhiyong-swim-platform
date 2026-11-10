@@ -3,12 +3,12 @@ from pathlib import Path
 import os
 
 def project_root():
-    # 兼容源码运行以及项目内独立venv中的wheel安装，不能依赖固定父目录层数。
+    # 源码运行/项目venv安装时定位项目；独立wheel运行时以启动目录作为本地数据根。
     for parent in Path(__file__).resolve().parents:
         metadata = parent / "pyproject.toml"
         if metadata.is_file() and 'name = "swim-platform-cloud"' in metadata.read_text():
             return parent
-    raise RuntimeError("未找到新版项目根目录；请从新版工作区安装运行")
+    return Path.cwd().resolve()
 
 
 ROOT = project_root()
