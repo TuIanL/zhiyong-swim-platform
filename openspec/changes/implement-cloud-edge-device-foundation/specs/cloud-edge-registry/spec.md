@@ -1,0 +1,89 @@
+# cloud-edge-registry Spec Delta
+
+## Purpose
+
+为新版游泳视频平台提供机构和场馆范围内的节点、设备与独立节点身份管理，使后续采集来源、云端登记和健康观测有可撤销、可追溯、可持久验证的基础；本能力不提供媒体、分析或完整场馆运行时。
+
+## ADDED Requirements
+
+### Requirement: Tenant scoped registry management
+服务 SHALL 允许当前Owner/Admin在本机构Site范围内登记、查询、修改节点/设备以及签发、列举、撤销节点凭据。Coach/Athlete即使有Site访问权也 MUST NOT 获得这些管理或读取权限。既有用户身份、成员关系与19个基础操作 MUST 保持兼容；节点列表 SHALL 支持status筛选，设备列表 SHALL 支持edge_node_id/status筛选。
+
+#### Scenario: Current institution manager
+- **WHEN** 有效Owner/Admin对本机构存在的Site执行节点或设备管理操作
+- **THEN** 服务 MUST 返回该Site资源，创建返回201、列表/详情/修改返回200、合法凭据撤销返回204，且不要求其持有显式SiteMembership
+
+#### Scenario: Unprivileged or foreign caller
+- **WHEN** 结构合法的用户请求分别来自匿名、非机构成员、同机构Coach/Athlete或持有其他机构/场馆资源ID的Owner/Admin
+- **THEN** 服务 MUST 分别返回401、404、403或404，不能暴露目标资源；拒绝的写入 MUST 不产生持久副作用
+
+#### Scenario: Invalid or empty patch
+- **WHEN** 已授权请求含未知/不可变字段、空PATCH、空名称或无效枚举
+- **THEN** 服务 MUST 返回422；值合法但当前状态不允许的迁移 MUST 返回409，错误沿用detail.code/message结构
+
+### Requirement: Immutable device provenance
+每个Node SHALL 固定归属一个Tenant/Site，每个Device SHALL 固定归属同Tenant/Site的一个Node；创建后归属 MUST 不可修改。创建Device SHALL 要求父Node active。停用 MUST 保留稳定ID和登记历史，实体 MUST 不提供DELETE；迁场馆 SHALL 登记新ID，hardware_serial MUST NOT 作为身份凭证或全局唯一键。
+
+#### Scenario: Mismatched parent scope
+- **WHEN** 管理员在Site A登记Device但指定Site B或其他Tenant的Node，或数据库写入不一致的复合父引用
+- **THEN** 服务或数据库 MUST 拒绝写入且回滚后无错误归属记录
+
+#### Scenario: Attempted relocation or parent deletion
+- **WHEN** 调用者尝试修改Node/Device的tenant/site/parent，或删除仍被新登记资源引用的父级
+- **THEN** 不可变字段请求 MUST 被拒绝，新增归属外键 MUST 阻止级联抹除这些记录；已停用记录 MUST 仍可由授权管理员查询，既有无新引用的六表删除语义 MUST 保持
+
+#### Scenario: Independent devices
+- **WHEN** 同一机构登记相同名称或相同hardware_serial的不同设备请求
+- **THEN** 不同请求 MUST 能保留独立Device ID，不能按序列号将其合并或授予对方身份
+
+### Requirement: Independent revocable edge credentials
+节点认证 SHALL 独立于User会话并只授权本节点heartbeat。凭据明文 SHALL 仅在签发成功响应返回一次；普通读取、数据库、幂等记录和日志 MUST 不包含明文，读取响应也 MUST NOT 暴露摘要。默认有效期 SHALL 为7天，显式expires_at SHALL 为未来时刻且不超过签发时刻30天；到达expires_at或被撤销的凭据 MUST 被拒绝。
+
+#### Scenario: Issue and revoke
+- **WHEN** Owner/Admin签发凭据、列举凭据并随后撤销，再以该凭据发heartbeat
+- **THEN** 仅签发响应 MUST 含secret；列表/撤销不含secret/hash；撤销后heartbeat MUST 返回401且不更新观测，重复合法撤销 MUST 返回204
+
+#### Scenario: User and node identity separation
+- **WHEN** User token用于Edge heartbeat，或Edge token用于用户节点管理/既有基础API
+- **THEN** 服务 MUST 返回401，节点凭据 MUST NOT 通过用户身份路径获得成员权限
+
+#### Scenario: Credential deadline and timezone
+- **WHEN** 在UTC及Asia/Shanghai连接配置下分别请求截止前、恰好截止和截止后的相同绝对时刻
+- **THEN** 截止前且Node active的请求 MUST 可通过；恰好截止及之后 MUST 返回401；重启或连接复用 MUST NOT 恢复过期/撤销凭据
+
+### Requirement: Administrative node lifecycle
+Node SHALL 从pending开始，只有Owner/Admin可执行pending→active、pending/active→disabled、disabled→active。停用 SHALL 原子撤销该Node当时全部有效凭据；heartbeat MUST NOT 激活或恢复Node。恢复disabled节点 SHALL 要求停用后新签发的有效凭据，旧凭据 MUST 永久失效。Device SHALL 支持active/disabled切换而保留来源。
+
+#### Scenario: Disable and restore
+- **WHEN** 管理员停用Node并尝试用旧凭据恢复通信，随后为该disabled Node签发新凭据并显式激活
+- **THEN** 旧凭据 MUST 始终被拒绝；新凭据在Node仍disabled时 MUST 被拒绝，合法激活后才可heartbeat；Device的父归属 MUST 不变
+
+#### Scenario: Concurrent disable and credential issue
+- **WHEN** 停用、凭据签发/撤销和heartbeat通过独立数据库连接并发执行
+- **THEN** 结果 MUST 对应一个合法事务顺序；停用先于新签发时新凭据仍不能用于disabled Node，签发先于停用时该凭据 MUST 被撤销；停用提交后的新请求 MUST 不更新观测；事务失败 MUST 不留下只停用但未撤销的部分结果
+
+### Requirement: Bounded trustworthy heartbeat observations
+有效active Node的heartbeat SHALL 持久记录服务端UTC last_seen_at及最近一次有界health/版本/自报配置观测；客户端时间 MUST NOT 替代last_seen_at。online SHALL 仅在Node active且服务端距最近heartbeat小于90秒时为true，其他情况为false。自报值 MUST NOT 改desired config_revision、归属、权限或行政status。
+
+#### Scenario: Self reported time and configuration
+- **WHEN** 有效节点提交software_version、health状态、observed_at_raw或reported_config_revision
+- **THEN** 服务 MUST 仅更新本节点观测；使用云端接收时间判在线，自报时间/高配置版本 MUST NOT 激活节点、变更desired版本或写入其他节点
+
+#### Scenario: Bounded input and restart
+- **WHEN** heartbeat含未知/越界字段、健康对象超过8KiB，或服务在合法heartbeat后重启
+- **THEN** 无效请求 MUST 返回422且不更新last_seen_at；重启后合法最近观测/凭据状态 MUST 保留，90秒边界 MUST 使online为false，查询在线状态 MUST 不要求定时任务改行政状态
+
+### Requirement: Durable request idempotency
+Node/Device创建及凭据签发 SHALL 要求有效Idempotency-Key，并按Tenant/Site、当前User、operation和目标资源隔离。相同键/规范化可写参数的并发或重启重试 MUST 只产生一个逻辑资源；异参 MUST 返回409。幂等结果 SHALL 持久保留且本Change不自动淘汰；重放 MUST 重新认证/授权，记录 MUST 不含secret或完整敏感请求体。
+
+#### Scenario: Retried creation and rollback
+- **WHEN** 相同主体/operation/目标的同键同参Node或Device创建通过不同连接并发，或在提交后丢失响应并重试
+- **THEN** MUST 仅有一个资源与一个已完成幂等记录，重试返回201及同一资源ID/当前可见状态；资源和幂等记录 MUST 同事务提交，失败 MUST 二者均无残留
+
+#### Scenario: Key conflict or revoked access
+- **WHEN** 同一作用域键携带不同参数，或原管理员失去当前管理权限后重放原请求
+- **THEN** 前者 MUST 返回409 idempotency_conflict；后者 MUST 按当前身份/角色拒绝，不能由缓存绕过撤权；不同主体或operation MUST 不共享结果
+
+#### Scenario: One time credential response
+- **WHEN** 一次凭据签发已经提交，客户端以相同键/参数重试或并发重试
+- **THEN** MUST 不再次签发或重放secret，仅在当前管理员仍有权限时返回409 credential_secret_not_replayable及其可见credential_id；secret MUST NOT 进入幂等缓存
