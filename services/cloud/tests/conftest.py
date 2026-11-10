@@ -245,15 +245,16 @@ def account(client):
 
 
 @pytest.fixture
-def seeded_account(app):
+def seeded_account(request):
     """直接写入账号与会话；供角色矩阵使用，避免每格重复 scrypt 成本。
 
     注册与登录作为独立 operation 在矩阵中单独验证，这里只构造合法身份。
     """
 
-    def create(name):
+    def create(name, *, application=None):
+        target_app = application or request.getfixturevalue("app")
         token = secrets.token_urlsafe(32)
-        with app.state.sessions() as db:
+        with target_app.state.sessions() as db:
             user = User(
                 email=f"{name}@example.test",
                 display_name=name,

@@ -14,7 +14,7 @@ pytestmark = pytest.mark.postgresql
 
 @pytest.fixture
 def registry_context(concurrency_app, seeded_account):
-    owner, owner_headers = seeded_account("edge-pg-owner")
+    owner, owner_headers = seeded_account("edge-pg-owner", application=concurrency_app)
     with TestClient(concurrency_app) as client:
         tenant_response = client.post("/api/v1/tenants", headers=owner_headers,
                                       json={"name": "Registry", "slug": "edge-pg"})
