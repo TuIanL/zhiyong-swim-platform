@@ -49,7 +49,9 @@ def simultaneous_sql(engine, predicate):
     event.listen(engine, "before_cursor_execute", gate)
     try:
         yield backend_pids
-        assert len(backend_pids) == 2 and len(set(backend_pids)) == 2, backend_pids
+        # Two participants synchronize at the barrier; a third concurrent
+        # request may execute the same observed statement without waiting.
+        assert len(backend_pids) >= 2 and len(set(backend_pids)) >= 2, backend_pids
     finally:
         event.remove(engine, "before_cursor_execute", gate)
 
