@@ -6,7 +6,7 @@
 - OpenSpec Change：define-cloud-capture-media-contracts
 - 设计基线：main@afb0e5fce4c187c8d3c3d5607d2a675375c2a04d
 - Proposal 评审基线：c07f20e103155aca5de9523be670dae813638cbc
-- 来源：[Proposal](../../openspec/changes/define-cloud-capture-media-contracts/proposal.md)、[Design D1–D10 / C1–C5](../../openspec/changes/define-cloud-capture-media-contracts/design.md)、负责人 2026-11-09 第二轮 Proposal 技术审阅与文档 Apply 授权。
+- 来源：[Proposal](../../openspec/changes/archive/2026-11-10-define-cloud-capture-media-contracts/proposal.md)、[Design D1–D10 / C1–C5](../../openspec/changes/archive/2026-11-10-define-cloud-capture-media-contracts/design.md)、负责人 2026-11-09 第二轮 Proposal 技术审阅与文档 Apply 授权。
 - 配套：[领域模型草案](../architecture/cloud-capture-media-domain.md)、[API 契约草案](../contracts/cloud-capture-media.md)、[既有云端领域模型](../architecture/cloud-domain-model.md)。
 
 ## 1. 决策范围与评审结论

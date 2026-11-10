@@ -11,13 +11,13 @@
 - 文档 Apply 已创建 `docs/architecture/cloud-capture-media-domain.md`：四实体 ERD、基数、字段及复合约束、不可变归属、采集来源、派生链、状态与历史保留；显式列出凭据和上传会话两个支持概念。
 - 文档 Apply 已创建 `docs/contracts/cloud-capture-media.md`：用户侧和设备侧路径、身份/角色/资源范围、请求响应、错误、稳定游标、分片上传与恢复、幂等及短期播放 URL。
 - 文档 Apply 已创建 `docs/decisions/0003-capture-media-domain-contracts.md`：对应设计 D1–D10，记录 C1–C5 来源、采纳结论、替代方案、取舍和后续实施前置；批准仅限 v0.1 设计方向。
-- 已更新 [cloud-domain-model.md](../../../docs/architecture/cloud-domain-model.md) 的「未实现实体与后续提案边界」表，把未来实体指向新草案，同时保留「未实现、无表/接口」的事实标注。
+- 已更新 [cloud-domain-model.md](../../../../docs/architecture/cloud-domain-model.md) 的「未实现实体与后续提案边界」表，把未来实体指向新草案，同时保留「未实现、无表/接口」的事实标注。
 - 推荐首版采用：节点/设备 tenant/site 与挂接关系不可原地迁移；派生资产保持同租户/场馆/会话；云端Session最终状态由云端授权路径推进，Edge可保存离线临时记录；当前Edge上传API只完成自己发起的上传，不据此权威结束整个会话。完整推荐、替代方案与评审问题见[设计](design.md)。
 - 按负责人本轮定向审阅进一步约束：Owner/Admin保持本机构管理范围；coach在有效场馆权限之上，仅能读取自己创建或资源级显式授权的Session/Asset，读取授权不自动授予Session管理权。API列表、详情、播放与授权撤销使用同一资源过滤语义。
 - 分离请求幂等、逻辑VideoAsset身份与物理内容复用：不同设备/不同采集即使SHA-256相同，也保留独立asset_id、来源、采集时间和授权；MediaBlob是否独立建表留后续业务实施设计。
 - 云端是Session最终业务权威，允许Edge离线生成临时本地记录并在联网后同步；具体离线协议另行提案。文档字段任务包含采集起止、视频时间基准、设备时钟来源/偏差及服务端接收时间，未知值不伪造成精确UTC。
 - 历史资产保留约束覆盖Site/Tenant生命周期，不能经父记录删除级联抹除录像、来源或仍被保留资产引用的内容；具体保留/处置与物理清理设计留待业务实施。
-- 校验 ERD、字段、约束、状态、API、错误及 ADR 一致；与[既有领域模型](../../../docs/architecture/cloud-domain-model.md)、[RBAC](../../../docs/contracts/cloud-rbac.md)和[基础 API 契约](../../../docs/contracts/cloud-foundation.md)逐项对照，保留草案与已实现事实的界限。
+- 校验 ERD、字段、约束、状态、API、错误及 ADR 一致；与[既有领域模型](../../../../docs/architecture/cloud-domain-model.md)、[RBAC](../../../../docs/contracts/cloud-rbac.md)和[基础 API 契约](../../../../docs/contracts/cloud-foundation.md)逐项对照，保留草案与已实现事实的界限。
 - 不改变：业务代码、模型、迁移、OpenAPI 快照、测试、依赖、CI、README 的实现状态描述。本 change **不产生任何 DDL**，也不声称 Edge、设备、采集、上传或播放已可用。
 
 ## Capabilities
@@ -47,7 +47,7 @@
 
 ## 第二轮评审与文档 Apply 授权（2026-11-09）
 
-负责人明确表示 PR #3 第二轮 Proposal 技术审阅通过并批准当前 D1–D10 设计方向，授权基于 `c07f20e103155aca5de9523be670dae813638cbc` 按 tasks.md 完成纯文档 Apply。该评审批准的是 v0.1 草案方向，不是数据库、业务接口、OpenAPI、主规格、RLS 或生产实现。当前文档交付与结构/链接/差异证据见[Apply 交叉核对记录](../../../docs/verification/cloud-capture-media-contracts-apply.md)。
+负责人明确表示 PR #3 第二轮 Proposal 技术审阅通过并批准当前 D1–D10 设计方向，授权基于 `c07f20e103155aca5de9523be670dae813638cbc` 按 tasks.md 完成纯文档 Apply。该评审批准的是 v0.1 草案方向，不是数据库、业务接口、OpenAPI、主规格、RLS 或生产实现。当前文档交付与结构/链接/差异证据见[Apply 交叉核对记录](../../../../docs/verification/cloud-capture-media-contracts-apply.md)。
 
 ## 本轮propose核对（2026-11-09）
 

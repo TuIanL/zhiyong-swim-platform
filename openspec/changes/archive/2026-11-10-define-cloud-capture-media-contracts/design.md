@@ -6,9 +6,9 @@
 
 | 已核对来源 | 事实与边界 |
 | --- | --- |
-| [模型](../../../services/cloud/src/swimplatform/models.py)、[原迁移](../../../services/cloud/migrations/versions/20261106_0001_cloud_identity.py) | 当前六表；sites 的 `(tenant_id,id)` 唯一键与 site_memberships 复合外键可作归属模式参考；本 change 不增表、不改 revision |
-| [基础API](../../../docs/contracts/cloud-foundation.md)、[RBAC](../../../docs/contracts/cloud-rbac.md) | 19个HTTP操作，业务错误 `detail{code,message}`，现有owner/admin/coach/athlete；现有列表无分页/幂等，不能顺带改造 |
-| [领域模型](../../../docs/architecture/cloud-domain-model.md)、cloud-identity主规格 | 四实体仍未实现；当前主规格10项要求不包含采集/媒体；文档change沿用skip_specs |
+| [模型](../../../../services/cloud/src/swimplatform/models.py)、[原迁移](../../../../services/cloud/migrations/versions/20261106_0001_cloud_identity.py) | 当前六表；sites 的 `(tenant_id,id)` 唯一键与 site_memberships 复合外键可作归属模式参考；本 change 不增表、不改 revision |
+| [基础API](../../../../docs/contracts/cloud-foundation.md)、[RBAC](../../../../docs/contracts/cloud-rbac.md) | 19个HTTP操作，业务错误 `detail{code,message}`，现有owner/admin/coach/athlete；现有列表无分页/幂等，不能顺带改造 |
+| [领域模型](../../../../docs/architecture/cloud-domain-model.md)、cloud-identity主规格 | 四实体仍未实现；当前主规格10项要求不包含采集/媒体；文档change沿用skip_specs |
 | [Notion 07](https://www.notion.so/410f602574aa81cda7bff8c3ed483f4d) §1/§3/§6/§7，状态草稿 | 实体表含TrainingSession、AnalysisTask，没有TrainingTask；API域有/training-tasks；媒体描述upload_session、分片续传、整对象校验，任务创建支持幂等键 |
 | [Notion 03](https://www.notion.so/410f602574aa8170b565f7fc4c5eab30) §2/§3/§6，状态草稿 | 有训练任务/Edge分配、未来角色及顶层域路径示例；不是既有四角色政策已经扩展的证据 |
 

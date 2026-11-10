@@ -36,11 +36,11 @@
 
 | 简称 | 文件 |
 | --- | --- |
-| M | [领域模型](../../../docs/architecture/cloud-capture-media-domain.md) |
-| A | [API契约](../../../docs/contracts/cloud-capture-media.md) |
-| R | [ADR 0003](../../../docs/decisions/0003-capture-media-domain-contracts.md) |
-| E | [Apply交叉核对记录](../../../docs/verification/cloud-capture-media-contracts-apply.md)，作为被核对交付，不代替本报告 |
-| B | [既有领域模型接线](../../../docs/architecture/cloud-domain-model.md) |
+| M | [领域模型](../../../../docs/architecture/cloud-capture-media-domain.md) |
+| A | [API契约](../../../../docs/contracts/cloud-capture-media.md) |
+| R | [ADR 0003](../../../../docs/decisions/0003-capture-media-domain-contracts.md) |
+| E | [Apply交叉核对记录](../../../../docs/verification/cloud-capture-media-contracts-apply.md)，作为被核对交付，不代替本报告 |
+| B | [既有领域模型接线](../../../../docs/architecture/cloud-domain-model.md) |
 | P / D / T | [proposal](proposal.md) / [design](design.md) / [tasks](tasks.md) |
 
 源页面重新读取：Notion [07数据模型/API草稿](https://www.notion.so/410f602574aa81cda7bff8c3ed483f4d)、[03云端SaaS草稿](https://www.notion.so/410f602574aa8170b565f7fc4c5eab30)、[数据模型原任务](https://www.notion.so/410f602574aa811bbad3c6e452a065b6)、[架构/API原任务](https://www.notion.so/410f602574aa816582ccc14817ce4601)及设计列出的媒体授权/Edge注册/分片上传/组织模型依赖任务。两项总体任务仍进行中，依赖任务仍为未开始/待确认，没有把文档子范围当全平台完成。
