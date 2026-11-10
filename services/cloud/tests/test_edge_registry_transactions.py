@@ -16,10 +16,14 @@ pytestmark = pytest.mark.postgresql
 def registry_context(concurrency_app, seeded_account):
     owner, owner_headers = seeded_account("edge-pg-owner")
     with TestClient(concurrency_app) as client:
-        tenant = client.post("/api/v1/tenants", headers=owner_headers,
-                             json={"name": "Registry", "slug": "edge-pg"}).json()
-        site = client.post(f"/api/v1/tenants/{tenant['id']}/sites", headers=owner_headers,
-                           json={"name": "Edge Site"}).json()
+        tenant_response = client.post("/api/v1/tenants", headers=owner_headers,
+                                      json={"name": "Registry", "slug": "edge-pg"})
+        assert tenant_response.status_code == 201, tenant_response.text
+        tenant = tenant_response.json()
+        site_response = client.post(f"/api/v1/tenants/{tenant['id']}/sites", headers=owner_headers,
+                                    json={"name": "Edge Site"})
+        assert site_response.status_code == 201, site_response.text
+        site = site_response.json()
     return {
         "app": concurrency_app,
         "owner": owner,

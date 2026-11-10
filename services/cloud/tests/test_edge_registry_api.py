@@ -129,7 +129,10 @@ def test_idempotency_replays_after_restart_and_rechecks_authorization(client, re
     assert device_first.status_code == device_again.status_code == 201
     assert device_first.json()["id"] == device_again.json()["id"]
 
-    url = str(app.state.engine.url)
+    # SQLAlchemy's URL string representation masks the password. Preserve the
+    # in-memory test credential when reconstructing the app to verify durable
+    # idempotency across an application restart.
+    url = app.state.engine.url.render_as_string(hide_password=False)
     app.state.engine.dispose()
     restarted = create_app(Settings(database_url=url))
     try:
