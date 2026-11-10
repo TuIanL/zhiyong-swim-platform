@@ -22,7 +22,7 @@
 - **THEN** 服务 MUST 返回422；值合法但当前状态不允许的迁移 MUST 返回409，错误沿用detail.code/message结构
 
 ### Requirement: Immutable device provenance
-每个Node SHALL 固定归属一个Tenant/Site，每个Device SHALL 固定归属同Tenant/Site的一个Node；创建后归属 MUST 不可修改。创建Device SHALL 要求父Node active。停用 MUST 保留稳定ID和登记历史，实体 MUST 不提供DELETE；迁场馆 SHALL 登记新ID，hardware_serial MUST NOT 作为身份凭证或全局唯一键。
+每个Node SHALL 固定归属一个Tenant/Site，每个Device SHALL 固定归属同Tenant/Site的一个Node；创建后归属 MUST 不可修改。D11第一版Device.kind SHALL 仅支持camera，身份为摄像头本身；物理部署 SHALL 按一台摄像头固定安装于一台跟拍小车并随车移动，不解释为泳池固定位置。创建Device SHALL 要求父Node active。停用 MUST 保留稳定ID和登记历史，实体 MUST 不提供DELETE；迁场馆 SHALL 登记新ID，hardware_serial MUST NOT 作为身份凭证或全局唯一键。当前登记 MUST NOT 要求Cart实体/ID，通用Device标识、父归属和kind扩展点 MUST 保留。
 
 #### Scenario: Mismatched parent scope
 - **WHEN** 管理员在Site A登记Device但指定Site B或其他Tenant的Node，或数据库写入不一致的复合父引用
@@ -36,8 +36,16 @@
 - **WHEN** 同一机构登记相同名称或相同hardware_serial的不同设备请求
 - **THEN** 不同请求 MUST 能保留独立Device ID，不能按序列号将其合并或授予对方身份
 
+#### Scenario: Mobile camera identity and physical deployment
+- **WHEN** 管理员登记固定安装于跟拍小车、随小车移动的摄像头
+- **THEN** Device MUST 标识camera本身，不要求泳池固定机位或Cart记录；一机一车 SHALL 是部署关系，本Change MUST NOT 因此提供电机/运动/自动跟拍/安全协议
+
+#### Scenario: Camera first with later type extension
+- **WHEN** 同一Node登记多台各自安装于不同小车的camera，或请求以cart/其他未支持kind登记
+- **THEN** 多台camera MUST 可取得独立通用Device ID，不限制为一Edge一Device；当前未支持kind MUST 返回422，未来类型 SHALL 通过独立领域/协议扩展，不更换既有Device ID或归属模型
+
 ### Requirement: Independent revocable edge credentials
-节点认证 SHALL 独立于User会话并只授权本节点heartbeat。凭据明文 SHALL 仅在签发成功响应返回一次；普通读取、数据库、幂等记录和日志 MUST 不包含明文，读取响应也 MUST NOT 暴露摘要。默认有效期 SHALL 为7天，显式expires_at SHALL 为未来时刻且不超过签发时刻30天；到达expires_at或被撤销的凭据 MUST 被拒绝。
+节点认证 SHALL 独立于User会话并只授权本节点heartbeat。D12凭据明文 SHALL 仅在签发成功响应返回一次；普通读取、数据库、幂等记录和日志 MUST 不包含明文，读取响应也 MUST NOT 暴露摘要。默认有效期 SHALL 为7天，显式expires_at SHALL 晚于服务端当前UTC且不超过签发时刻30天；到达expires_at或被撤销的凭据 MUST 被拒绝。服务 MUST NOT 自动续期、因心跳/离线延长有效期或恢复已撤销凭据；替换凭据 SHALL 通过受控重新签发，自动轮换服务和离线身份恢复协议不在本Change。
 
 #### Scenario: Issue and revoke
 - **WHEN** Owner/Admin签发凭据、列举凭据并随后撤销，再以该凭据发heartbeat
@@ -51,6 +59,14 @@
 - **WHEN** 在UTC及Asia/Shanghai连接配置下分别请求截止前、恰好截止和截止后的相同绝对时刻
 - **THEN** 截止前且Node active的请求 MUST 可通过；恰好截止及之后 MUST 返回401；重启或连接复用 MUST NOT 恢复过期/撤销凭据
 
+#### Scenario: Long disconnected edge needs controlled reissue
+- **WHEN** Node连续离线35天后使用原凭据重新连接云端，即使其行政状态仍active
+- **THEN** 原凭据 MUST 因已过最长30天有效期而返回401；云端认证及未来依赖该身份的同步 SHALL 在受控重新签发并更新Edge凭据前保持不可用，不得自动启用离线宽限或恢复协议
+
+#### Scenario: Heartbeats do not renew or revive a credential
+- **WHEN** 节点持续心跳、重试或重新联网，或者管理员想继续使用已撤销凭据
+- **THEN** expires_at MUST 不因通信而延长，revoked凭据 MUST 不可恢复；只能由有权管理员受控重新签发，明文一次性及幂等不重放规则 MUST 继续成立
+
 ### Requirement: Administrative node lifecycle
 Node SHALL 从pending开始，只有Owner/Admin可执行pending→active、pending/active→disabled、disabled→active。停用 SHALL 原子撤销该Node当时全部有效凭据；heartbeat MUST NOT 激活或恢复Node。恢复disabled节点 SHALL 要求停用后新签发的有效凭据，旧凭据 MUST 永久失效。Device SHALL 支持active/disabled切换而保留来源。
 
@@ -63,7 +79,7 @@ Node SHALL 从pending开始，只有Owner/Admin可执行pending→active、pendi
 - **THEN** 结果 MUST 对应一个合法事务顺序；停用先于新签发时新凭据仍不能用于disabled Node，签发先于停用时该凭据 MUST 被撤销；停用提交后的新请求 MUST 不更新观测；事务失败 MUST 不留下只停用但未撤销的部分结果
 
 ### Requirement: Bounded trustworthy heartbeat observations
-有效active Node的heartbeat SHALL 持久记录服务端UTC last_seen_at及最近一次有界health/版本/自报配置观测；客户端时间 MUST NOT 替代last_seen_at。online SHALL 仅在Node active且服务端距最近heartbeat小于90秒时为true，其他情况为false。自报值 MUST NOT 改desired config_revision、归属、权限或行政status。
+D13默认心跳发送间隔 SHALL 为30秒；云端 SHALL 允许网络抖动及有界重试，不要求恰好30秒收到请求。有效active Node的heartbeat SHALL 持久记录服务端UTC last_seen_at及最近一次有界health/版本/自报配置观测；客户端时间 MUST NOT 替代接收时间。online SHALL 仅在Node active且0≤服务端距最近有效heartbeat<90秒时为true。失败、超时或超窗 MUST NOT 自动修改行政status；自报值 MUST NOT 改desired config_revision、归属或权限。响应 SHALL 说明服务端last_seen_at、online及30秒发送/90秒在线策略；90秒 MUST NOT 被表述为可用性SLA。
 
 #### Scenario: Self reported time and configuration
 - **WHEN** 有效节点提交software_version、health状态、observed_at_raw或reported_config_revision
@@ -72,6 +88,14 @@ Node SHALL 从pending开始，只有Owner/Admin可执行pending→active、pendi
 #### Scenario: Bounded input and restart
 - **WHEN** heartbeat含未知/越界字段、健康对象超过8KiB，或服务在合法heartbeat后重启
 - **THEN** 无效请求 MUST 返回422且不更新last_seen_at；重启后合法最近观测/凭据状态 MUST 保留，90秒边界 MUST 使online为false，查询在线状态 MUST 不要求定时任务改行政状态
+
+#### Scenario: Default cadence with jitter and bounded retry
+- **WHEN** 模拟客户端按默认30秒节奏发送，并在网络抖动后以有限次数/超时预算重试合法心跳
+- **THEN** 云端 MUST 对每次有效请求重新认证，以服务端接收时间更新last_seen_at；HeartbeatRead MUST 返回edge_node_id、last_seen_at、online、heartbeat_interval_seconds默认30及online_window_seconds为90，不将客户端时间或重试当作凭据续期
+
+#### Scenario: Offline window does not disable the node
+- **WHEN** active Node距最近有效心跳分别不足90秒、恰好90秒、超过90秒，随后收到有效心跳或继续失败
+- **THEN** online MUST 分别为true、false、false；有效心跳可恢复online，但失败/超窗/重试耗尽 MUST 不改变行政status或恢复已停用Node权限，在线窗口 MUST 不作为服务SLA
 
 ### Requirement: Durable request idempotency
 Node/Device创建及凭据签发 SHALL 要求有效Idempotency-Key，并按Tenant/Site、当前User、operation和目标资源隔离。相同键/规范化可写参数的并发或重启重试 MUST 只产生一个逻辑资源；异参 MUST 返回409。幂等结果 SHALL 持久保留且本Change不自动淘汰；重放 MUST 重新认证/授权，记录 MUST 不含secret或完整敏感请求体。

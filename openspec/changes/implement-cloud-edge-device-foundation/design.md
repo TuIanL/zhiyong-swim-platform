@@ -2,7 +2,7 @@
 
 ## Context
 
-动机与唯一实施范围见[proposal](proposal.md)，路线建议见[全项目审计](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。本文件的F1–F8是**本次待审实施选择**；ADR0003 D1–D10是已评审文档方向，两者不混同为业务已获批准。
+动机与唯一实施范围见[proposal](proposal.md)，路线与决策补录见[全项目审计](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。负责人已确认本Change为首项业务主线及D11–D13；F1–F8中其余实施细化仍待最终审阅。ADR0003 D1–D10及本轮决策均不等于已获Apply授权或业务已实现。
 
 main@d7f1eed只有六表、19操作。[api.py](../../../services/cloud/src/swimplatform/api.py)已有identity/membership/manager/site_access和UTC瞬间归一逻辑；[models.py](../../../services/cloud/src/swimplatform/models.py)有Site复合唯一键；[PG schema测试](../../../services/cloud/tests/test_postgresql_schema.py)固定六表，现有[pg_support](../../../services/cloud/tests/pg_support.py)授权使用ALL TABLES语句。新增表时必须改为批准集合并扩展断言，不能删除六表回归或沿用自动授权任意表。
 
@@ -10,9 +10,17 @@ main@d7f1eed只有六表、19操作。[api.py](../../../services/cloud/src/swimp
 
 **Goals:** 用现有用户权限管理节点登记，用独立持久凭据验证本节点观测；在没有真实硬件/存储/GPU的隔离环境中可验收。规范见[新能力](specs/cloud-edge-registry/spec.md)和[基础增量](specs/cloud-identity/spec.md)。
 
-**Non-Goals:** 不实现完整Edge软件、设备控制、配置下发、媒体/训练/分析、学员关系、RLS或生产栈。首次仅支持camera登记，其他Device kind须另评审；Node列表不扩张为全API分页。
+**Non-Goals:** 不实现完整Edge软件、设备控制/电机/运动/自动跟拍/安全协议、配置下发、媒体/训练/分析、学员关系、RLS或生产栈。D11第一版仅支持camera登记，不单建Cart Device；其他kind与控制器/底盘遥测须后续领域/协议评审。Node列表不扩张为全API分页。
 
 ## Decisions
+
+### 已确认的负责人决策 D11–D13
+
+| 决策 | 已确认内容与本片边界 |
+| --- | --- |
+| D11 Camera-first | 云端Device标识摄像头；一台摄像头固定安装于一台跟拍小车并随车移动，这是当前物理部署关系，不是泳池固定位置机位。无需先建Cart实体/ID，不在本片实施控制器或安全协议；Device标识、父归属和类型判别保持通用，未来kind可经独立Change扩展。 |
+| D12 EdgeCredential | 默认7天、最长30天，服务端UTC为到期基准；撤销不可恢复、明文成功签发只返一次，不存入数据库/读取/日志/幂等。无自动续期、离线无限延长、离线身份恢复协议或自动轮换服务。 |
+| D13 Heartbeat | 默认发送30秒；Node active且0≤服务端当前时刻−last_seen_at<90秒才online，允许抖动/有界重试；失败和超时不改变行政状态，自报时间无权替代接收时间。90秒不是SLA。 |
 
 ### F1 模型、归属与历史
 
@@ -28,6 +36,8 @@ main@d7f1eed只有六表、19操作。[api.py](../../../services/cloud/src/swimp
 新增父级FK使用RESTRICT，不沿用六表CASCADE；Node/Device没有删除入口，迁场馆重新登记。身份引用指向User，不指向TenantMembership，避免成员撤销被登记记录阻止；现有无新引用的六表级联语义保留。幂等的多类型resource引用由写服务核对并与实际资源同事务提交，不冒充多态FK自动约束。
 
 tenant/site/node归属创建后API不可更改，PATCH仅name/status且至少一个字段；kind/serial不在PATCH可写集合。复合FK保证一致性，不声称FK能独自保证所有状态/权限/不可变规则。Device创建与重新启用要求父Node active，停用父节点不迁移/删除Device。名称/序列号不默认唯一，不能当认证身份。
+
+D11按一机一车描述物理安装关系，不新增Cart表、Cart外键或强制cart_id，也不把一机一车误设为一个Edge只能有一个Device。一个Node可登记多台camera，每台有自己的通用Device UUID/来源；不将Device ID编码成Cart ID、泳池固定机位或仅Camera专用资源名。第一版输入及约束只接受camera，未来类型通过扩展kind校验/相应迁移与协议实现，不必更换既有ID/父归属。摄像头随车移动，不能从“固定安装”推导出相机坐标固定；运动补偿/标定不在本片实现。
 
 ### F2 12个操作及错误边界
 
@@ -50,15 +60,15 @@ P=/api/v1/tenants/{tenant_id}/sites/{site_id}。以下均为本次拟实现，�
 
 Owner/Admin不依赖显式SiteMembership；Coach/Athlete无节点/设备读取或管理权。结构合法请求先按用户/节点身份401、非机构成员404、同机构角色不足403，再按授权管理范围下的错误Tenant/Site/Node/Device/Credential ID返回404；非法筛选、枚举、空PATCH/未知字段为422；合法值遇状态冲突为409。复用detail.code/message，新增edge_node_not_found/device_not_found/credential_not_found、edge_unauthorized、state_conflict和幂等code；credential_secret_not_replayable在detail附可见credential_id。框架422结构保持既有行为，不更改19操作的顺序或错误格式。
 
-节点/设备读取保留PR3已有字段；本片增加NodeRead.online和health_summary（含software_version/status）以完成原节点任务的“版本/健康可查”。它们是本提案的可观测字段细化，不是声称PR3已经实现。所有字段/长度和候选参数须随本提案审阅。
+节点/设备读取保留PR3已有字段；本片增加NodeRead.online和health_summary（含software_version/status）以完成原节点任务的“版本/健康可查”。HeartbeatRead见F4，发送间隔/在线窗口按已确认D13说明；其余字段/长度细化仍随本提案最终审阅，不是声称PR3已经实现。
 
 ### F3 凭据与行政生命周期
 
 采用高熵不透明token（至少256位随机量，Edge命名空间前缀）+摘要；不使用机器人User或用户会话，不在此引入mTLS/证书发行栈。Bearer承载方式可共用HTTP机制，认证查询空间与权限必须分离。
 
-expires_at可省略，默认签发时UTC+7天；提供时必须晚于当前时刻且不超过30天。截止恰好命中即拒绝，复用as_utc语义，UTC/Asia时区变体隔离配置。Credential可在pending/active/disabled节点签发，但pending/disabled一律不能用它heartbeat；普通查询不含secret/hash。
+按已确认D12，expires_at可省略，默认服务端签发时UTC+7天；提供时必须晚于服务端当前时刻且不超过签发时刻30天。截止恰好命中即拒绝，复用as_utc语义，UTC/Asia时区变体隔离配置。Credential可在pending/active/disabled节点签发，但pending/disabled一律不能用它heartbeat；普通查询不含secret/hash。明文只在成功签发时返回一次，数据库/普通读取/日志/幂等记录不得出现明文；重试不重放secret。撤销不可恢复，不能清空revoked_at使旧钥复活；只能由有权管理员重新签发。
 
-Node pending→active、pending/active→disabled、disabled→active；同状态PATCH为无副作用重试，非法回pending为409。停用在同事务锁定Node、generation递增、撤销所有当前凭据；恢复必须有停用后新generation有效凭据。disabled时先签新凭据再显式激活，不形成“只能active签发而恢复又需新凭据”的死循环。active节点可先签新凭据再撤旧完成轮换。
+Node pending→active、pending/active→disabled、disabled→active；同状态PATCH为无副作用重试，非法回pending为409。停用在同事务锁定Node、generation递增、撤销所有当前凭据；恢复必须有停用后新generation有效凭据。disabled时先签新凭据再显式激活，不形成“只能active签发而恢复又需新凭据”的死循环。active节点的有权管理员可手动先签新凭据再撤旧；这是现有签发/撤销操作的人工组合，不是自动续期或自动轮换服务。成功心跳不延长expires_at，离线也不冻结或无限延长有效期。
 
 签发/撤销/停用/恢复/heartbeat共享Node锁及事务顺序；PostgreSQL使用实际行锁，SQLite使用受支持的事务/条件更新语义。停用先提交后的新heartbeat拒绝；heartbeat先获锁提交的观测可以保留，不声称已接受请求能被事后撤回。只靠进程内锁无法跨worker/重启保证，不采用该方案。
 
@@ -66,9 +76,11 @@ Node pending→active、pending/active→disabled、disabled→active；同状�
 
 HeartbeatRequest：reported_config_revision?(非负int)、observed_at_raw?(≤128字符，保留原始不确定时间)、health?对象。health仅software_version?(1–64字符)与status?(ok/degraded/unknown)，拒绝未知字段，序列化大小≤8KiB，不接收任意日志/设备Secret。
 
+HeartbeatRead：edge_node_id、服务端UTC last_seen_at、当前online、heartbeat_interval_seconds（默认30）、online_window_seconds（90）。请求不得自报权威last_seen_at、online、行政status或替换这些服务端参数；响应的30/90说明当前心跳策略，不构成可用性SLA。默认每30秒发送是客户端接入约定，本Change通过模拟客户端/可控时钟验证，不实现Edge Runtime常驻发送器。
+
 服务端接收时写UTC last_seen_at、最近版本/健康观测；reported版本只写applied观测，不修改desired config_revision（本片固定初始1，无配置下发端点）、status或归属。NodeRead按active且0≤now-last_seen_at<90秒计算online，不用定时任务修改行政状态；从未心跳、pending/disabled或到达90秒均offline。合法最近观测持久存储，不能把在线心跳当GPU/存储健康实测或完整监控。
 
-替代“客户端时间决定在线”和“心跳自动激活”会引入身份提升/时钟伪造，因此不采用；90秒窗口及凭据期限是本提案明确选择、待负责人批准，不是既有政策。
+按已确认D13，允许网络抖动、丢包及有限次数/有限超时预算的重试，不要求云端必须在恰好30秒接收到请求；每次收到重试仍重新核验凭据，以本次有效接收时间更新观测。预算用尽不能无限忙循环，具体退避/重试上限由后续Runtime设计确定；本片用有限步模拟验证协议容忍性。失败、超时或超过90秒只影响online观测，不自动disabled/active节点；再次收到有效心跳可恢复online，不授予行政权限。90秒和凭据期限已确认，不再列为待决参数。
 
 ### F5 持久幂等及一次性明文
 
@@ -95,7 +107,10 @@ cloud-identity两个MODIFIED块完整保留原场景；原基础revision20261106
 | D1/D2/D9 | 实施Node/Device固定归属、RESTRICT和停用历史；Asset等未来来源未建表 |
 | D3 | 仅Owner/Admin管理和独立Edge身份；不实施Coach媒体grant/学员关系 |
 | D4/D5/D6/D7/D10 | Session/Asset/上传/采集时间/离线协议不实施；不以通用幂等替代采集身份 |
-| D8 | 复用11个管理操作+heartbeat；新增Node在线/健康读取字段、期限/长度为本次待审细化；不改现有19操作 |
+| D8 | 复用11个管理操作+heartbeat；字段/长度等实施细化仍待审，期限和30秒/90秒已由D12/D13确认；不改现有19操作 |
+| D11 | camera是随车移动的摄像头Device；一机一车为物理关系，不建Cart资源，不把kind/ID设计封死为不可扩展 |
+| D12 | 7天默认/30天最长、一次性明文、不可恢复撤销、服务端UTC；长离线恢复仅作后续议题 |
+| D13 | 30秒发送/90秒窗口及服务端last_seen_at，响应说明策略、有限重试不改行政状态，不作SLA |
 | Notion节点原任务 | 版本/健康可查、身份可撤销由本片承接；健康summary不替代Runtime安装/完整运维验收 |
 
 ## Risks / Trade-offs
@@ -104,7 +119,14 @@ cloud-identity两个MODIFIED块完整保留原场景；原基础revision20261106
 - 迁移后角色权限丢失 → 测试夹具在roundtrip后重新按批准表集合授权；迁移脚本不冒充生产角色部署。
 - 行锁/唯一冲突处理在两后端有差异 → 共享行为测试+PG独立连接实测，超时/串行单连接不能冒充并发通过。
 - 永久幂等摘要增长、短凭据需轮换、在线只反映最近通信 → 作为开发切片明确限制，生产容量/轮换自动化和监控另评审；本片不部署生产。
-- 本提案参数可能被负责人调整 → 在Propose中按确认修改规格/设计/任务后再Apply，不从已归档文档推导实现授权。
+- D11–D13已确认但未获Apply授权，其他实施细化仍待审 → 按本次已确认决策收口Propose，不从已归档文档或主线确认推导实现授权。
+
+## Future Considerations / Known Limitations
+
+- **长期断网凭据恢复（未来待决）**：例如Edge连续离线35天，已超过最长30天有效期。即使Node行政状态仍active，重新联网后旧凭据也必须401，云端认证及未来依赖该凭据的同步不能继续，直到通过受控方式重新签发并在Edge更新凭据。不得以修改旧expires_at、复活revoked凭据、无限离线宽限或一次心跳来绕过到期。
+- 未来需另行评审离线节点重新验证、谁可恢复、secret的受控投递/设备端更新、审计及失败处理。本片仅提供既定管理员签发/撤销接口，不实现自动续期、离线身份恢复协议或自动密钥轮换服务，不创建相关新Change。不能将本地优先原则解释为云端凭据可无限有效；本地业务的离线身份/运行能力仍由后续Runtime方案负责，本片不承诺其已实现。
+- 30秒发送节奏与有界重试属于接入契约，不扩张本片为完整Runtime调度、网络恢复或运维服务；90秒在线窗口不提供成功率、延迟或可用性SLA。
+- D11已确认相机随小车移动；未来独立小车控制器、底盘遥测、运动/安全控制与其他Device.kind须扩展设备协议及领域模型，不在本片隐含实现，也不把摄像头安装固定等同泳池位置固定。
 
 ## Migration Plan
 
