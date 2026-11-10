@@ -29,19 +29,19 @@
 | --- | --- | --- |
 | 完整默认SQLite套件 | `PYTHONPATH=services/cloud/src .venv/bin/python -m pytest -o addopts='' -q` | 121 passed、47 skipped、0 failed；跳过项要求专用PostgreSQL后端 |
 | Registry模型/API定向回归 | `pytest services/cloud/tests/test_edge_registry_schema.py services/cloud/tests/test_edge_registry_api.py` | 9 passed；包含无副作用同状态PATCH、角色边界、幂等、明文不泄露、期限、在线边界和35天离线行为 |
-| Change strict | `openspec validate implement-cloud-edge-device-foundation --strict --json` | 1/1 passed，0 issues |
-| 主规格 strict | `openspec validate --specs --strict --json` | cloud-identity 1/1 passed，0 issues；本次未同步/修改主规格 |
-| Markdown本地链接 | 一次性Python解析器扫描PR跟踪文件（不含保留的未跟踪模板目录） | 43份Markdown、189处本地路径链接（含1个标题锚点），0失效 |
+| Change strict | `OPENSPEC_TELEMETRY=0 openspec validate implement-cloud-edge-device-foundation --strict --json` | 1/1 passed，0 issues |
+| 主规格 strict | `OPENSPEC_TELEMETRY=0 openspec validate --specs --strict --json` | cloud-identity 1/1 passed，0 issues；本次未同步/修改主规格 |
+| Markdown本地链接 | 一次性Python解析器扫描43份跟踪Markdown；检查191处本地路径链接，且单独确认1个标题锚点目标存在 | 0失效 |
 | Git whitespace | `git diff --check` | 通过 |
 | 初始迁移一致性 | 将批准基线的 `20261106_0001_cloud_identity.py` 与包内文件逐字节比较 | 完全一致，3214 bytes |
 | wheel独立安装 | `python -m pip wheel --no-deps --no-build-isolation .`；再将wheel安装至隔离target，以`python -I`从临时目录运行 | wheel `swim_platform_cloud-0.1.0-py3-none-any.whl`；SHA-256 `3fe82e511f2d94df1af5852e260f8a1d063178e86f2ab4490099a8826c57e27e` |
 
 wheel包含Registry模块、初始迁移和 `20261110_0002`。隔离安装后的应用启动不自动迁移（`/ready`对空库返回503）；`init-db`对临时目录`var/`以外SQLite目标拒绝且不创建文件；在临时工作目录自己的`var/`内显式初始化成功，revision为`20261110_0002`、含11张表（10张业务表及`alembic_version`）。
 
-本机Docker daemon当前未启动，因此没有在本机伪称执行PostgreSQL。PostgreSQL完整共享与专属套件以PR #4最新head的GitHub Actions实跑为准；提交及CI结果确认后将补入本节，且只接受主/辅助清理状态和进程退出码一致、临时容器已验证清理的证据。
+本机Docker daemon未启动，未在本机声称执行PostgreSQL；真实数据库结果来自PR #4专用PostgreSQL 17 Actions job。实现代码head `1b3863483080e0f877147d20689a81960e71a180` 的[CI run 42823504176](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42823504176)（run 63）两job均成功：SQLite `121 passed, 49 skipped`（49项均为PG专属）；PG `shared=120, postgresql=49`，`169 passed, 1 skipped`（仅SQLite专属），0 failed。新增UTC及Asia/Shanghai独立数据库会话凭据截止前/恰好/之后场景各通过。PG日志记录专用run id `21f52896263968a4`，结果`passed`、主清理`removed`；CI always兜底再次核验容器为`absent`、`exit_code=0`，摘要状态/结果一致。脱敏测试证据上传为[postgresql-evidence artifact 13766394673](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/42823504176/artifacts/13766394673)，同head。workflow含权限、schema、角色、迁移、真实独立backend并发、D11–D13及核心API完整回归。此前失败的执行只暴露测试夹具问题：密码遮蔽的URL重建、账号种入错误应用数据库、三请求竞态监听器精确计数；已逐一修正，最终上述运行通过。最终文档提交还会触发PR检查，并在PR/Notion交付记录中列出其head对应的CI。
 
 ## 任务状态与阶段边界
 
-当前`tasks.md`为2/14：0.1授权门槛与1.1四表模型/约束已完成；其他12项等待全部双后端、迁移权限、打包及交付证据齐备后再勾选。Notion唯一原始P1 Edge Node任务已在Apply开始时改为进行中；其余P0/P1任务属性保持原值。最终Apply交付后将把该任务交负责人验收，不标记整个P1或云端平台完成。
+当前`tasks.md`为14/14：四表模型/增量迁移、12个API操作、权限与并发验证、D11–D13验收、双后端完整测试、wheel独立安装、文档和Notion同步均有交付证据。这里的完成仅表示本OpenSpec Apply工作项完成；Notion唯一原始[P1 Edge Node任务](https://www.notion.so/410f602574aa81e9bfa5cb7ca947e7f7)已提交负责人验收（待验收），[新版工程入口](https://www.notion.so/410f602574aa81288834cc297ae5b039)已记录交付。其他P0/P1任务状态与属性不变，不标记整个P1或云端平台完成。
 
 Apply停止时保持 PR #4 Draft、`main` 不变。独立Verify、OpenSpec Archive、主规格同步和GitHub Merge均等待项目负责人分别授权。
