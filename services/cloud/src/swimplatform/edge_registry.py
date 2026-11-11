@@ -131,6 +131,27 @@ def lock_node(db: Session, node_id: str) -> EdgeNode | None:
     return db.scalar(query)
 
 
+def lock_manager_node(db: Session, tenant_id: str, site_id: str, node_id: str) -> EdgeNode | None:
+    """Lock only a Node inside the manager's already-authorized Tenant/Site scope."""
+    scope = (
+        EdgeNode.id == node_id,
+        EdgeNode.tenant_id == tenant_id,
+        EdgeNode.site_id == site_id,
+    )
+    query = select(EdgeNode).where(*scope).execution_options(populate_existing=True)
+    if db.bind.dialect.name == "postgresql":
+        query = query.with_for_update()
+    else:
+        # Preserve the SQLite write-serialization behavior while applying the same scope
+        # predicate before attempting the conditional write.
+        result = db.execute(
+            update(EdgeNode).where(*scope).values(updated_at=EdgeNode.updated_at)
+        )
+        if result.rowcount != 1:
+            return None
+    return db.scalar(query)
+
+
 def idempotency_key_digest(value: str) -> str:
     if not IDEMPOTENCY_KEY_PATTERN.fullmatch(value):
         fail(422, "invalid_idempotency_key", "Idempotency-Key须为8至128位受限ASCII字符")
@@ -310,8 +331,8 @@ def update_edge_node(
     request: Request, user: Current, db: DB,
 ):
     require_manager_site(db, tenant_id, site_id, user)
-    node = lock_node(db, str(edge_node_id))
-    if not node or node.tenant_id != str(tenant_id) or node.site_id != str(site_id):
+    node = lock_manager_node(db, str(tenant_id), str(site_id), str(edge_node_id))
+    if not node:
         fail(404, "edge_node_not_found", "节点不存在或无访问权限")
     now = server_now(request)
     changes = payload.model_dump(exclude_unset=True)
@@ -384,8 +405,8 @@ def issue_edge_credential(
     idempotency_header: Annotated[str, Header(alias="Idempotency-Key")], user: Current, db: DB,
 ):
     require_manager_site(db, tenant_id, site_id, user)
-    node = lock_node(db, str(edge_node_id))
-    if not node or node.tenant_id != str(tenant_id) or node.site_id != str(site_id):
+    node = lock_manager_node(db, str(tenant_id), str(site_id), str(edge_node_id))
+    if not node:
         fail(404, "edge_node_not_found", "节点不存在或无访问权限")
     key_digest = idempotency_key_digest(idempotency_header)
     target = str(edge_node_id)
@@ -428,8 +449,8 @@ def revoke_edge_credential(
     request: Request, user: Current, db: DB,
 ):
     require_manager_site(db, tenant_id, site_id, user)
-    node = lock_node(db, str(edge_node_id))
-    if not node or node.tenant_id != str(tenant_id) or node.site_id != str(site_id):
+    node = lock_manager_node(db, str(tenant_id), str(site_id), str(edge_node_id))
+    if not node:
         fail(404, "edge_node_not_found", "节点不存在或无访问权限")
     credential_query = select(EdgeCredential).where(
         EdgeCredential.id == str(credential_id),

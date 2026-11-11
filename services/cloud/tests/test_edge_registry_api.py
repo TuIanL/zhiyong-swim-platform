@@ -2,11 +2,13 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from swimplatform.config import Settings
 from swimplatform.main import create_app
 from swimplatform.models import Device, EdgeCredential, EdgeNode, IdempotencyRecord
+from swimplatform.schemas import EdgeNodeCreate, HeartbeatRequest
 
 
 @pytest.fixture
@@ -218,6 +220,44 @@ def test_credential_once_header_identity_and_lifecycle_audit(client, registry_wo
         assert revoked.revoked_at is not None
     assert client.post(heartbeat_path, headers={"Authorization": f"Bearer {issued['token']}"},
                        json={}).status_code == 401
+
+
+def test_heartbeat_preserves_raw_observation_and_normalizes_other_strings(client, registry_world, app):
+    world = registry_world
+    owner = world["accounts"]["owner"][1]
+    raw_observation = "  device clock value \t "
+
+    assert HeartbeatRequest(observed_at_raw=raw_observation).observed_at_raw == raw_observation
+    assert EdgeNodeCreate(name="  ordinary node name  ").name == "ordinary node name"
+    with pytest.raises(ValidationError):
+        HeartbeatRequest(observed_at_raw=123)
+    with pytest.raises(ValidationError):
+        HeartbeatRequest(observed_at_raw="x" * 129)
+
+    node = create_node(client, world).json()
+    now = datetime.now(UTC) + timedelta(seconds=5)
+    app.state.clock = lambda: now
+    credential = issue_credential(client, world, node["id"]).json()
+    assert client.patch(
+        f"{world['nodes']}/{node['id']}", headers=owner, json={"status": "active"}
+    ).status_code == 200
+    response = client.post(
+        "/api/v1/edge/heartbeat",
+        headers={"Authorization": f"Bearer {credential['token']}"},
+        json={
+            "observed_at_raw": raw_observation,
+            "health": {"software_version": "  0.3.0  ", "status": "ok"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    with app.state.sessions() as db:
+        saved = db.get(EdgeNode, node["id"])
+        assert saved.observed_at_raw == raw_observation
+    read = client.get(f"{world['nodes']}/{node['id']}", headers=owner)
+    assert read.status_code == 200, read.text
+    assert read.json()["observed_at_raw"] == raw_observation
+    assert read.json()["software_version"] == "0.3.0"
 
 
 def test_deadlines_online_boundary_and_atomic_disable_restore(client, registry_world, app):

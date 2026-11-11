@@ -1,10 +1,10 @@
 import json
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 
 class Input(BaseModel):
@@ -237,7 +237,8 @@ class HeartbeatHealth(Input):
 
 class HeartbeatRequest(Input):
     reported_config_revision: int | None = Field(default=None, ge=0)
-    observed_at_raw: str | None = Field(default=None, max_length=128)
+    # Device clock input is diagnostic raw text; unlike other strings, whitespace is data.
+    observed_at_raw: Annotated[str | None, StringConstraints(strip_whitespace=False, max_length=128)] = None
     health: HeartbeatHealth | None = None
 
     @model_validator(mode="after")

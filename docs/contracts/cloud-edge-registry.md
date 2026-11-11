@@ -36,7 +36,7 @@ Heartbeat只接受当前Node的Edge凭据，使用请求头Authorization: Bearer
 | DeviceCreate | edge_node_id必填；name 1–120；kind仅camera（默认camera）；hardware_serial可空，最多120。父Node须active。 |
 | DevicePatch | 非空；只接受name和status。父Node非active时不能重新启用Device。 |
 | EdgeCredentialIssue | expires_at可省略；省略为服务端当前UTC+7天。显式值须带时区、晚于当前时刻且不超过30天。 |
-| HeartbeatRequest | 可选reported_config_revision>=0、原样observed_at_raw最多128字符、health中的software_version最多64字符和status=ok/degraded/unknown；未知字段拒绝。 |
+| HeartbeatRequest | 可选reported_config_revision>=0、原样observed_at_raw最多128字符（包括首尾空白；不解析或规范化设备时钟字符串）、health中的software_version最多64字符和status=ok/degraded/unknown；未知字段拒绝。其他普通输入字符串仍按各自规则规范化。 |
 | EdgeNodeRead | 稳定ID与归属、名称/状态、期望与最近自报revision、服务端last_seen_at、在线结果、最近版本/健康观测、创建者及时间。 |
 | DeviceRead | 稳定Device ID、Tenant/Site/Node归属、名称、kind、状态、可空序列号及时间。 |
 | EdgeCredentialRead | ID、generation、签发/到期时间、签发User、首次撤销时间和撤销User；不含token或token摘要。 |

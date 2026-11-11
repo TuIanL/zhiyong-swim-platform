@@ -1,6 +1,10 @@
 """PostgreSQL physical-connection and lifecycle transaction evidence."""
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 import threading
+from time import monotonic
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +16,7 @@ from swimplatform.main import create_app
 from swimplatform.models import Device, EdgeCredential, EdgeNode, IdempotencyRecord
 
 pytestmark = pytest.mark.postgresql
+_request_operation = ContextVar("edge_registry_request_operation", default=None)
 
 
 @pytest.fixture
@@ -66,6 +71,91 @@ def create_node(context, client, key="node-create-pg-01"):
 def issue(context, client, node_id, key="credential-pg-01"):
     return client.post(f"{context['nodes']}/{node_id}/credentials",
                        headers={**context["headers"], "Idempotency-Key": key}, json={})
+
+
+def create_scope(app, seeded_account, account_name, slug):
+    owner, headers = seeded_account(account_name, application=app)
+    with TestClient(app) as client:
+        tenant_response = client.post(
+            "/api/v1/tenants", headers=headers, json={"name": slug, "slug": slug}
+        )
+        assert tenant_response.status_code == 201, tenant_response.text
+        tenant = tenant_response.json()
+        site_response = client.post(
+            f"/api/v1/tenants/{tenant['id']}/sites", headers=headers, json={"name": f"{slug} site"}
+        )
+        assert site_response.status_code == 201, site_response.text
+        site = site_response.json()
+    prefix = f"/api/v1/tenants/{tenant['id']}/sites/{site['id']}"
+    return {
+        "app": app,
+        "owner": owner,
+        "headers": headers,
+        "tenant_id": tenant["id"],
+        "site_id": site["id"],
+        "nodes": prefix + "/edge-nodes",
+        "devices": prefix + "/devices",
+    }
+
+
+def ordered_registry_race(app, first_name, first_job, second_name, second_job):
+    """Pause after the first Node FOR UPDATE and release only after the second tries it."""
+    first_locked = threading.Event()
+    second_attempting = threading.Event()
+    release_first = threading.Event()
+    backend_pids = {}
+    engine = app.state.engine
+
+    def node_lock(statement):
+        normalized = statement.lower()
+        return "from edge_nodes" in normalized and "for update" in normalized
+
+    def record_pid(connection, operation):
+        backend_pids[operation] = connection.connection.driver_connection.info.backend_pid
+
+    def before_cursor_execute(connection, cursor, statement, parameters, context, executemany):
+        operation = _request_operation.get()
+        if operation == second_name and node_lock(statement):
+            record_pid(connection, operation)
+            second_attempting.set()
+
+    def after_cursor_execute(connection, cursor, statement, parameters, context, executemany):
+        operation = _request_operation.get()
+        if operation == first_name and node_lock(statement):
+            record_pid(connection, operation)
+            first_locked.set()
+            if not release_first.wait(timeout=15):
+                raise AssertionError("controlled transaction did not receive release signal")
+
+    def request(operation, job):
+        token = _request_operation.set(operation)
+        try:
+            with TestClient(app) as client:
+                return job(client)
+        finally:
+            _request_operation.reset(token)
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    event.listen(engine, "after_cursor_execute", after_cursor_execute)
+    started = monotonic()
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        first = executor.submit(request, first_name, first_job)
+        assert first_locked.wait(timeout=15), "first request did not acquire the Node row lock"
+        second = executor.submit(request, second_name, second_job)
+        assert second_attempting.wait(timeout=15), "second request did not reach the Node row-lock query"
+        assert backend_pids[first_name] != backend_pids[second_name], backend_pids
+        release_first.set()
+        responses = {
+            first_name: first.result(timeout=30),
+            second_name: second.result(timeout=30),
+        }
+    finally:
+        release_first.set()
+        executor.shutdown(wait=True, cancel_futures=True)
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+        event.remove(engine, "after_cursor_execute", after_cursor_execute)
+    return responses, backend_pids, monotonic() - started
 
 
 def test_concurrent_node_create_same_key_commits_one_resource(registry_context):
@@ -129,6 +219,226 @@ def test_concurrent_credential_issue_returns_secret_once(registry_context):
         assert successful.json()["token"] not in credentials[0].token_hash
         assert successful.json()["token"] not in records[0].request_hash
     assert len(set(pids)) == 2
+
+
+def test_foreign_manager_node_requests_do_not_wait_on_or_mutate_foreign_scope(
+    registry_context, seeded_account, pg_environment, concurrency_database
+):
+    """A locked foreign Node must be invisible to scoped manager lock queries."""
+    context = registry_context
+    app = context["app"]
+    foreign = create_scope(app, seeded_account, "edge-pg-foreign-owner", "edge-pg-foreign")
+    with TestClient(app) as client:
+        node_response = create_node(foreign, client, key="foreign-node-create-01")
+        assert node_response.status_code == 201, node_response.text
+        node = node_response.json()
+        credential_response = issue(
+            foreign, client, node["id"], key="foreign-credential-create-01"
+        )
+        assert credential_response.status_code == 201, credential_response.text
+        credential = credential_response.json()
+        assert client.patch(
+            f"{foreign['nodes']}/{node['id']}", headers=foreign["headers"], json={"status": "active"}
+        ).status_code == 200
+
+    foreign_node_path = f"{context['nodes']}/{node['id']}"
+    foreign_credential_path = f"{foreign_node_path}/credentials/{credential['id']}"
+    with app.state.sessions() as db:
+        before_node = db.get(EdgeNode, node["id"])
+        before_node = tuple(getattr(before_node, column.key) for column in EdgeNode.__table__.columns)
+        before_credentials = [
+            tuple(getattr(row, column.key) for column in EdgeCredential.__table__.columns)
+            for row in db.scalars(
+                select(EdgeCredential).where(EdgeCredential.edge_node_id == node["id"])
+                .order_by(EdgeCredential.id)
+            ).all()
+        ]
+        before_records = [
+            tuple(getattr(row, column.key) for column in IdempotencyRecord.__table__.columns)
+            for row in db.scalars(
+                select(IdempotencyRecord).where(IdempotencyRecord.site_id == foreign["site_id"])
+                .order_by(IdempotencyRecord.id)
+            ).all()
+        ]
+    requests = {
+        "node_patch": lambda client: client.patch(
+            foreign_node_path, headers=context["headers"], json={"name": "cross-tenant-write"}
+        ),
+        "credential_issue": lambda client: client.post(
+            f"{foreign_node_path}/credentials",
+            headers={**context["headers"], "Idempotency-Key": "cross-issue-key-01"},
+            json={},
+        ),
+        "credential_revoke": lambda client: client.delete(
+            foreign_credential_path, headers=context["headers"]
+        ),
+    }
+    request_pids = {}
+
+    def remember_manager_lock(connection, cursor, statement, parameters, execution_context, executemany):
+        label = _request_operation.get()
+        normalized = statement.lower()
+        if label in requests and "from edge_nodes" in normalized and "for update" in normalized:
+            request_pids[label] = connection.connection.driver_connection.info.backend_pid
+
+    for label, job in requests.items():
+        requests[label] = (
+            lambda client, label=label, job=job: _run_marked_request(label, job, client)
+        )
+
+    engine = app.state.engine
+    event.listen(engine, "before_cursor_execute", remember_manager_lock)
+    try:
+        with pg_environment.admin(concurrency_database.name, search_path="swim_cloud") as locker:
+            with locker.transaction():
+                locker_pid = locker.execute("SELECT pg_backend_pid()").fetchone()[0]
+                locked = locker.execute(
+                    "SELECT id FROM edge_nodes WHERE id = %s FOR UPDATE", (node["id"],)
+                ).fetchone()
+                assert locked == (node["id"],)
+
+                # All three responses must complete while this independent transaction still
+                # owns the foreign row lock. A global-id FOR UPDATE would block here.
+                responses = run_concurrently(
+                    app, list(requests.values()), timeout=8.0
+                )
+                assert [response.status_code for response in responses] == [404, 404, 404]
+                assert set(request_pids) == set(requests), request_pids
+                assert all(pid != locker_pid for pid in request_pids.values())
+                assert all(
+                    response.json()["detail"]["code"] == "edge_node_not_found"
+                    for response in responses
+                )
+    finally:
+        event.remove(engine, "before_cursor_execute", remember_manager_lock)
+
+    with app.state.sessions() as db:
+        saved_node = db.get(EdgeNode, node["id"])
+        after_node = tuple(getattr(saved_node, column.key) for column in EdgeNode.__table__.columns)
+        after_credentials = [
+            tuple(getattr(row, column.key) for column in EdgeCredential.__table__.columns)
+            for row in db.scalars(
+                select(EdgeCredential).where(EdgeCredential.edge_node_id == node["id"])
+                .order_by(EdgeCredential.id)
+            ).all()
+        ]
+        after_records = [
+            tuple(getattr(row, column.key) for column in IdempotencyRecord.__table__.columns)
+            for row in db.scalars(
+                select(IdempotencyRecord).where(IdempotencyRecord.site_id == foreign["site_id"])
+                .order_by(IdempotencyRecord.id)
+            ).all()
+        ]
+        assert after_node == before_node
+        assert after_credentials == before_credentials
+        assert after_records == before_records
+
+
+def _run_marked_request(operation, job, client):
+    token = _request_operation.set(operation)
+    try:
+        return job(client)
+    finally:
+        _request_operation.reset(token)
+
+
+def test_manual_credential_revoke_and_heartbeat_have_both_serial_orders(
+    registry_context, seeded_account
+):
+    context = create_scope(
+        registry_context["app"], seeded_account, "edge-pg-revoke-owner", "edge-pg-revoke"
+    )
+    app = context["app"]
+    manager_admin, manager_admin_headers = seeded_account(
+        "edge-pg-revoke-admin", application=app
+    )
+    with TestClient(app) as client:
+        assert client.post(
+            f"/api/v1/tenants/{context['tenant_id']}/members",
+            headers=context["headers"],
+            json={"user_id": manager_admin["id"], "role": "admin"},
+        ).status_code == 201
+        node_response = create_node(context, client, key="revoke-race-node-001")
+        assert node_response.status_code == 201, node_response.text
+        node = node_response.json()
+        first_credential_response = issue(
+            context, client, node["id"], key="revoke-race-credential-01"
+        )
+        assert first_credential_response.status_code == 201, first_credential_response.text
+        first_credential = first_credential_response.json()
+        assert client.patch(
+            f"{context['nodes']}/{node['id']}", headers=context["headers"], json={"status": "active"}
+        ).status_code == 200
+
+    heartbeat_time = datetime.now(UTC) + timedelta(seconds=30)
+    app.state.clock = lambda: heartbeat_time
+    first_path = (
+        f"{context['nodes']}/{node['id']}/credentials/{first_credential['id']}"
+    )
+    first_heartbeat = lambda client: client.post(
+        "/api/v1/edge/heartbeat",
+        headers={"Authorization": f"Bearer {first_credential['token']}"},
+        json={},
+    )
+    first_revoke = lambda client: client.delete(first_path, headers=manager_admin_headers)
+    first_results, first_pids, _ = ordered_registry_race(
+        app, "heartbeat", first_heartbeat, "revoke", first_revoke
+    )
+    assert first_results["heartbeat"].status_code == 200, first_results["heartbeat"].text
+    assert first_results["revoke"].status_code == 204, first_results["revoke"].text
+    assert first_pids["heartbeat"] != first_pids["revoke"]
+    assert datetime.fromisoformat(
+        first_results["heartbeat"].json()["last_seen_at"].replace("Z", "+00:00")
+    ).astimezone(UTC) == heartbeat_time
+    with app.state.sessions() as db:
+        saved_node = db.get(EdgeNode, node["id"])
+        saved_credential = db.get(EdgeCredential, first_credential["id"])
+        assert saved_node.last_seen_at.astimezone(UTC) == heartbeat_time
+        assert saved_credential.revoked_at.astimezone(UTC) == heartbeat_time
+        assert saved_credential.revoked_by_user_id == manager_admin["id"]
+
+    # A second credential exercises revoke-first: heartbeat reaches the same Node lock
+    # while revoke owns it, then must observe the committed revocation after acquiring it.
+    with TestClient(app) as client:
+        second_credential_response = issue(
+            context, client, node["id"], key="revoke-race-credential-02"
+        )
+        assert second_credential_response.status_code == 201, second_credential_response.text
+        second_credential = second_credential_response.json()
+    baseline_last_seen = heartbeat_time
+    revoke_time = heartbeat_time + timedelta(seconds=10)
+    app.state.clock = lambda: revoke_time
+    second_path = (
+        f"{context['nodes']}/{node['id']}/credentials/{second_credential['id']}"
+    )
+    second_revoke = lambda client: client.delete(second_path, headers=manager_admin_headers)
+    second_heartbeat = lambda client: client.post(
+        "/api/v1/edge/heartbeat",
+        headers={"Authorization": f"Bearer {second_credential['token']}"},
+        json={},
+    )
+    second_results, second_pids, _ = ordered_registry_race(
+        app, "revoke", second_revoke, "heartbeat", second_heartbeat
+    )
+    assert second_results["revoke"].status_code == 204, second_results["revoke"].text
+    assert second_results["heartbeat"].status_code == 401, second_results["heartbeat"].text
+    assert second_pids["revoke"] != second_pids["heartbeat"]
+    with app.state.sessions() as db:
+        saved_node = db.get(EdgeNode, node["id"])
+        saved_credential = db.get(EdgeCredential, second_credential["id"])
+        assert saved_node.last_seen_at.astimezone(UTC) == baseline_last_seen
+        assert saved_credential.revoked_at.astimezone(UTC) == revoke_time
+        assert saved_credential.revoked_by_user_id == manager_admin["id"]
+
+    # A repeated delete from a different valid manager is idempotent and keeps first audit data.
+    app.state.clock = lambda: revoke_time + timedelta(seconds=10)
+    with TestClient(app) as client:
+        repeated = client.delete(second_path, headers=context["headers"])
+    assert repeated.status_code == 204, repeated.text
+    with app.state.sessions() as db:
+        saved_credential = db.get(EdgeCredential, second_credential["id"])
+        assert saved_credential.revoked_at.astimezone(UTC) == revoke_time
+        assert saved_credential.revoked_by_user_id == manager_admin["id"]
 
 
 def test_disable_issue_and_heartbeat_race_has_serializable_lifecycle(registry_context):

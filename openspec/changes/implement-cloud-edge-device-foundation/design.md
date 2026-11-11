@@ -60,6 +60,8 @@ P=/api/v1/tenants/{tenant_id}/sites/{site_id}。以下均为本次拟实现，�
 
 Owner/Admin不依赖显式SiteMembership；Coach/Athlete无节点/设备读取或管理权。结构合法请求先按用户/节点身份401、非机构成员404、同机构角色不足403，再按授权管理范围下的错误Tenant/Site/Node/Device/Credential ID返回404；非法筛选、枚举、空PATCH/未知字段为422；合法值遇状态冲突为409。复用detail.code/message，新增edge_node_not_found/device_not_found/credential_not_found、edge_unauthorized、state_conflict和幂等code；credential_secret_not_replayable在detail附可见credential_id。框架422结构保持既有行为，不更改19操作的顺序或错误格式。
 
+管理端对Node PATCH、Credential签发和撤销必须先用Node ID、Tenant ID与Site ID的联合条件定位并加行锁；scope外或不存在的Node统一404，不能按全局Node ID先锁再验归属。Edge Token路径仍由已验证凭据中的edge_node_id定位并锁定所属Node。
+
 节点/设备读取保留PR3已有字段；本片增加NodeRead.online和health_summary（含software_version/status）以完成原节点任务的“版本/健康可查”。HeartbeatRead见F4，发送间隔/在线窗口按已确认D13说明；其余字段/长度细化仍随本提案最终审阅，不是声称PR3已经实现。
 
 ### F3 凭据与行政生命周期
@@ -76,7 +78,7 @@ Node pending→active、pending/active→disabled、disabled→active；同状�
 
 ### F4 心跳只是观测
 
-HeartbeatRequest：reported_config_revision?(非负int)、observed_at_raw?(≤128字符，保留原始不确定时间)、health?对象。health仅software_version?(1–64字符)与status?(ok/degraded/unknown)，拒绝未知字段，序列化大小≤8KiB，不接收任意日志/设备Secret。
+HeartbeatRequest：reported_config_revision?(非负int)、observed_at_raw?(≤128字符，完整保留原始不确定时间文本，包括首尾空白；不解析/裁剪/规范化)、health?对象。health仅software_version?(1–64字符)与status?(ok/degraded/unknown)，拒绝未知字段，序列化大小≤8KiB，不接收任意日志/设备Secret。此原样语义仅适用于observed_at_raw，不改变其他普通输入字符串的空白规范化规则。
 
 HeartbeatRead：edge_node_id、服务端UTC last_seen_at、当前online、heartbeat_interval_seconds（默认30）、online_window_seconds（90）。请求不得自报权威last_seen_at、online、行政status或替换这些服务端参数；响应的30/90说明当前心跳策略，不构成可用性SLA。默认每30秒发送是客户端接入约定，本Change通过模拟客户端/可控时钟验证，不实现Edge Runtime常驻发送器。
 
