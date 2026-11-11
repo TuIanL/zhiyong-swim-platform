@@ -222,11 +222,14 @@ def test_concurrent_credential_issue_returns_secret_once(registry_context):
 
 
 def test_foreign_manager_node_requests_do_not_wait_on_or_mutate_foreign_scope(
-    registry_context, seeded_account, pg_environment, concurrency_database
+    registry_context, seeded_account, pg_environment, concurrency_database, record_property
 ):
     """A locked foreign Node must be invisible to scoped manager lock queries."""
     context = registry_context
     app = context["app"]
+    pool_size = app.state.engine.pool.size()
+    assert pool_size >= 8
+    record_property("application_pool_size", str(pool_size))
     foreign = create_scope(app, seeded_account, "edge-pg-foreign-owner", "edge-pg-foreign")
     with TestClient(app) as client:
         node_response = create_node(foreign, client, key="foreign-node-create-01")
@@ -305,6 +308,9 @@ def test_foreign_manager_node_requests_do_not_wait_on_or_mutate_foreign_scope(
                 assert [response.status_code for response in responses] == [404, 404, 404]
                 assert set(request_pids) == set(requests), request_pids
                 assert all(pid != locker_pid for pid in request_pids.values())
+                record_property("foreign_row_lock_backend_pid", str(locker_pid))
+                for operation, backend_pid in sorted(request_pids.items()):
+                    record_property(f"{operation}_backend_pid", str(backend_pid))
                 assert all(
                     response.json()["detail"]["code"] == "edge_node_not_found"
                     for response in responses
@@ -343,12 +349,15 @@ def _run_marked_request(operation, job, client):
 
 
 def test_manual_credential_revoke_and_heartbeat_have_both_serial_orders(
-    registry_context, seeded_account
+    registry_context, seeded_account, record_property
 ):
     context = create_scope(
         registry_context["app"], seeded_account, "edge-pg-revoke-owner", "edge-pg-revoke"
     )
     app = context["app"]
+    pool_size = app.state.engine.pool.size()
+    assert pool_size >= 8
+    record_property("application_pool_size", str(pool_size))
     manager_admin, manager_admin_headers = seeded_account(
         "edge-pg-revoke-admin", application=app
     )
@@ -387,6 +396,8 @@ def test_manual_credential_revoke_and_heartbeat_have_both_serial_orders(
     assert first_results["heartbeat"].status_code == 200, first_results["heartbeat"].text
     assert first_results["revoke"].status_code == 204, first_results["revoke"].text
     assert first_pids["heartbeat"] != first_pids["revoke"]
+    record_property("heartbeat_first_backend_pid", str(first_pids["heartbeat"]))
+    record_property("revoke_after_heartbeat_backend_pid", str(first_pids["revoke"]))
     assert datetime.fromisoformat(
         first_results["heartbeat"].json()["last_seen_at"].replace("Z", "+00:00")
     ).astimezone(UTC) == heartbeat_time
@@ -423,6 +434,8 @@ def test_manual_credential_revoke_and_heartbeat_have_both_serial_orders(
     assert second_results["revoke"].status_code == 204, second_results["revoke"].text
     assert second_results["heartbeat"].status_code == 401, second_results["heartbeat"].text
     assert second_pids["revoke"] != second_pids["heartbeat"]
+    record_property("revoke_first_backend_pid", str(second_pids["revoke"]))
+    record_property("heartbeat_after_revoke_backend_pid", str(second_pids["heartbeat"]))
     with app.state.sessions() as db:
         saved_node = db.get(EdgeNode, node["id"])
         saved_credential = db.get(EdgeCredential, second_credential["id"])
