@@ -2,7 +2,7 @@
 
 > 本记录覆盖 `implement-cloud-edge-device-foundation` 的 Apply，不是独立 Verify、Archive、主规格同步或合并结论。四个实施实体和12个API操作只代表本Change范围；不代表完整Edge Runtime、云端媒体业务或平台项目已完成。
 
-- OpenSpec Change：[implement-cloud-edge-device-foundation Proposal](../../openspec/changes/implement-cloud-edge-device-foundation/proposal.md)
+- OpenSpec Change：[implement-cloud-edge-device-foundation Proposal](../../openspec/changes/archive/2026-11-11-implement-cloud-edge-device-foundation/proposal.md)
 - PR：[Draft PR #4](https://github.com/TuIanL/zhiyong-swim-platform/pull/4)
 - Apply批准基线：`334f589b66e22dc55716f5e6befb44d31e003cd1`
 - 事实main基线：`d7f1eedb13ac0f44abb738bc6e8b4d0d38d7766d`

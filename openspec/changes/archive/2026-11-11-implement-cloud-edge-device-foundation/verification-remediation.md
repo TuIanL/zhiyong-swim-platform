@@ -8,7 +8,7 @@
 - 修复代码 head：`f4ab838fb1a438d8f927a90fcb3746a9ce0188da`
 - 初始 Apply Code Head：`5b3dcec45628697f7401d45df3da4e0d05ff79db`
 - 首次 Verify 报告提交：`71c1212d7d9099e46d50938ab9da161a605a65db`
-- Apply 后修复记录：[cloud-edge-device-foundation-remediation.md](../../../docs/verification/cloud-edge-device-foundation-remediation.md)
+- Apply 后修复记录：[cloud-edge-device-foundation-remediation.md](../../../../docs/verification/cloud-edge-device-foundation-remediation.md)
 - 本轮范围：核对现有 14 项 Apply 交付，并重点验证首次报告 W1、W2、W3 是否已修复。首次 [verification.md](verification.md) 原文保留，未覆盖。
 - 核验依据：当前代码与 OpenSpec artifacts、PostgreSQL/SQLite 最终 head CI 原始日志和证据包，以及本报告列明的 strict、契约和链接检查。
 
@@ -42,20 +42,20 @@ OpenSpec `instructions apply --change implement-cloud-edge-device-foundation --j
 
 ### W1：跨租户管理请求不会先锁定全局 Node
 
-- **实现**：[edge_registry.py:134](../../../services/cloud/src/swimplatform/edge_registry.py#L134) 的 `lock_manager_node` 在构造 `FOR UPDATE` 查询前同时限定 `EdgeNode.id`、`tenant_id`、`site_id`。Node PATCH、Credential Issue、Revoke 分别在 [edge_registry.py:333](../../../services/cloud/src/swimplatform/edge_registry.py#L333)、[edge_registry.py:407](../../../services/cloud/src/swimplatform/edge_registry.py#L407)、[edge_registry.py:451](../../../services/cloud/src/swimplatform/edge_registry.py#L451) 调用 scoped lock，范围不匹配统一返回 `edge_node_not_found` 404。Edge Token 认证仍通过 credential 绑定的 Node 使用原 `lock_node` 路径。
-- **负向测试**：[test_edge_registry_transactions.py:224](../../../services/cloud/tests/test_edge_registry_transactions.py#L224) 建立 Tenant A 与 Tenant B 的真实 Node/Credential。独立 PG 管理连接持有 Tenant B Node 的行锁时，并发发送 A 管理员对 B 资源的 PATCH、Issue、Revoke；三项请求必须在 8 秒上限内、外部锁仍持有时完成，均断言同一 404 code。测试监听每个 Node 锁查询的实际 backend PID，并比较锁持有人 PID；Node、Credential、幂等记录做变更前后快照比较。
+- **实现**：[edge_registry.py:134](../../../../services/cloud/src/swimplatform/edge_registry.py#L134) 的 `lock_manager_node` 在构造 `FOR UPDATE` 查询前同时限定 `EdgeNode.id`、`tenant_id`、`site_id`。Node PATCH、Credential Issue、Revoke 分别在 [edge_registry.py:333](../../../../services/cloud/src/swimplatform/edge_registry.py#L333)、[edge_registry.py:407](../../../../services/cloud/src/swimplatform/edge_registry.py#L407)、[edge_registry.py:451](../../../../services/cloud/src/swimplatform/edge_registry.py#L451) 调用 scoped lock，范围不匹配统一返回 `edge_node_not_found` 404。Edge Token 认证仍通过 credential 绑定的 Node 使用原 `lock_node` 路径。
+- **负向测试**：[test_edge_registry_transactions.py:224](../../../../services/cloud/tests/test_edge_registry_transactions.py#L224) 建立 Tenant A 与 Tenant B 的真实 Node/Credential。独立 PG 管理连接持有 Tenant B Node 的行锁时，并发发送 A 管理员对 B 资源的 PATCH、Issue、Revoke；三项请求必须在 8 秒上限内、外部锁仍持有时完成，均断言同一 404 code。测试监听每个 Node 锁查询的实际 backend PID，并比较锁持有人 PID；Node、Credential、幂等记录做变更前后快照比较。
 - **结论**：代码的锁条件在归属检查阶段即生效；CI 实际通过该负向测试。没有再发现“先按全局 ID 锁定再验机构”的管理路由。
 
 ### W2：`observed_at_raw` 保留原始字符串
 
-- **实现**：[schemas.py:238](../../../services/cloud/src/swimplatform/schemas.py#L238) 只对 `observed_at_raw` 使用 `strip_whitespace=False`，保留 `str | None` 类型和 128 字符上限；父类对其他普通字段的空白规范化仍保留。
-- **测试**：[test_edge_registry_api.py:225](../../../services/cloud/tests/test_edge_registry_api.py#L225) 断言 Pydantic 输入、Heartbeat API 持久化、数据库值和 NodeRead 均保留首尾空白；普通 Node 名称和 health software version 仍被规范化；非法类型和 129 字符输入被拒绝。
-- **契约**：[cloud-edge-registry.md](../../../docs/contracts/cloud-edge-registry.md) 与 Design 明确原始字段包括首尾空白且不解析/裁剪/规范化。当前 FastAPI 生成 schema 与 `docs/contracts/openapi.json` 完全相等，字段仍为 nullable string、`maxLength=128`。
+- **实现**：[schemas.py:238](../../../../services/cloud/src/swimplatform/schemas.py#L238) 只对 `observed_at_raw` 使用 `strip_whitespace=False`，保留 `str | None` 类型和 128 字符上限；父类对其他普通字段的空白规范化仍保留。
+- **测试**：[test_edge_registry_api.py:225](../../../../services/cloud/tests/test_edge_registry_api.py#L225) 断言 Pydantic 输入、Heartbeat API 持久化、数据库值和 NodeRead 均保留首尾空白；普通 Node 名称和 health software version 仍被规范化；非法类型和 129 字符输入被拒绝。
+- **契约**：[cloud-edge-registry.md](../../../../docs/contracts/cloud-edge-registry.md) 与 Design 明确原始字段包括首尾空白且不解析/裁剪/规范化。当前 FastAPI 生成 schema 与 `docs/contracts/openapi.json` 完全相等，字段仍为 nullable string、`maxLength=128`。
 - **结论**：首次报告中的 W2 已修复，未影响其他输入字段。
 
 ### W3：显式 Credential Revoke / Heartbeat 两种事务顺序
 
-- **测试**：[test_edge_registry_transactions.py:351](../../../services/cloud/tests/test_edge_registry_transactions.py#L351) 为 PostgreSQL 专属必需场景；应用 pool 断言至少 8。竞态 helper 为两个操作使用不同的 `pg_backend_pid()`；测试将 PID 写入 JUnit `record_property`。PG harness 在 [test-postgresql.py:460](../../../scripts/test-postgresql.py#L460) 使用兼容 `record_property` 的 xunit1，参数有单测。
+- **测试**：[test_edge_registry_transactions.py:351](../../../../services/cloud/tests/test_edge_registry_transactions.py#L351) 为 PostgreSQL 专属必需场景；应用 pool 断言至少 8。竞态 helper 为两个操作使用不同的 `pg_backend_pid()`；测试将 PID 写入 JUnit `record_property`。PG harness 在 [test-postgresql.py:460](../../../../scripts/test-postgresql.py#L460) 使用兼容 `record_property` 的 xunit1，参数有单测。
 - **顺序 A**：Heartbeat `200` 后 Revoke `204`；响应和持久状态中 `last_seen_at` 等于服务端接收时间，Credential 已撤销。
 - **顺序 B**：Revoke `204` 后旧 Credential Heartbeat `401`；失败请求不更新 `last_seen_at`，首次 `revoked_by_user_id`/`revoked_at` 保持。
 - **重复撤销**：另一名有效管理员再次 DELETE 返回 `204`，不能覆盖首次撤销主体或时间。
@@ -94,13 +94,13 @@ None. 首轮报告中的 W1、W2、W3 现由本报告所列实现、负向/往�
 
 #### S1 — 幂等记录永久保留需在未来删除/隐私设计中定策略
 
-- **证据**：[models.py:212](../../../services/cloud/src/swimplatform/models.py#L212) 的 IdempotencyRecord 保留 tenant/site/user、资源 ID 与 hash；用户和场馆关联使用 RESTRICT，Design F5 明确不自动淘汰。
+- **证据**：[models.py:212](../../../../services/cloud/src/swimplatform/models.py#L212) 的 IdempotencyRecord 保留 tenant/site/user、资源 ID 与 hash；用户和场馆关联使用 RESTRICT，Design F5 明确不自动淘汰。
 - **影响**：后续用户/场馆删除或隐私擦除可能受历史记录外键与标识保留影响。当前没有对应删除流程，本 Change 的永久去重行为符合已批准边界。
 - **建议**：在后续删除/隐私 Change 中明确保留期限、清理/匿名化和外键策略，再实现删除流程；当前不削弱幂等保证。
 
 #### S2 — `resource_id` 是显式软引用
 
-- **证据**：[models.py:230](../../../services/cloud/src/swimplatform/models.py#L230) 对 resource kind 做约束并建索引，但多态 `resource_id` 无法由单一外键引用 Node、Device 或 Credential。
+- **证据**：[models.py:230](../../../../services/cloud/src/swimplatform/models.py#L230) 对 resource kind 做约束并建索引，但多态 `resource_id` 无法由单一外键引用 Node、Device 或 Credential。
 - **影响**：未来若新增资源删除，历史幂等记录可能指向已删除资源，数据库本身不能阻止或清理该引用。
 - **建议**：在未来删除/墓碑设计中规定幂等重放、目标删除与保留记录的顺序，并为准许的删除路径增加测试。
 
@@ -112,7 +112,7 @@ None. 首轮报告中的 W1、W2、W3 现由本报告所列实现、负向/往�
 
 #### S4 — 12 个操作的全角色负向矩阵仍不完整
 
-- **证据**：[test_edge_registry_api.py:55](../../../services/cloud/tests/test_edge_registry_api.py#L55) 对 Node 列表/详情代表性验证 Owner/Admin、Coach、Athlete、非成员和匿名，但当前测试未对全部 12 个操作逐一参数化覆盖 Owner/Admin、Coach、Athlete、匿名、非成员、错 Site 和跨 Tenant。新增 W1 用例专门覆盖三个敏感管理路由，不等同完整矩阵。
+- **证据**：[test_edge_registry_api.py:55](../../../../services/cloud/tests/test_edge_registry_api.py#L55) 对 Node 列表/详情代表性验证 Owner/Admin、Coach、Athlete、非成员和匿名，但当前测试未对全部 12 个操作逐一参数化覆盖 Owner/Admin、Coach、Athlete、匿名、非成员、错 Site 和跨 Tenant。新增 W1 用例专门覆盖三个敏感管理路由，不等同完整矩阵。
 - **影响**：权限依赖未来可能错误接线的某一个端点时，逐端点角色回归未必发现。
 - **建议**：后续增加共享参数化端点/角色矩阵与拒绝无副作用快照，不扩大本次 W1–W3 修复范围。
 

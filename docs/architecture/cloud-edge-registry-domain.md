@@ -4,7 +4,7 @@
 
 - 实际模型：[models.py](../../services/cloud/src/swimplatform/models.py)
 - 增量迁移：[20261110_0002](../../services/cloud/migrations/versions/20261110_0002_cloud_edge_registry.py)
-- Apply范围：[OpenSpec Tasks](../../openspec/changes/implement-cloud-edge-device-foundation/tasks.md)
+- Apply范围：[OpenSpec Tasks](../../openspec/changes/archive/2026-11-11-implement-cloud-edge-device-foundation/tasks.md)
 - API契约：[Cloud Edge Registry API](../contracts/cloud-edge-registry.md)
 - 验收报告：[Apply验证记录](../verification/cloud-edge-device-foundation-apply.md)
 

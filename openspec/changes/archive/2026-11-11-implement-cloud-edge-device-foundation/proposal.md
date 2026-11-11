@@ -2,7 +2,7 @@
 
 ## Why
 
-main已提供账号/机构/场馆和隔离PostgreSQL基线，但没有可登记、撤销和观测的Edge/Device身份。负责人已正式确认本Change为下一阶段第一项业务实施主线；依据[P0/P1路线与决策补录](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)，先建设Cloud Edge Registry，为后续可信采集来源和Edge云接入提供边界，避免重建Tenant/Site或提前铺开媒体/Runtime。
+main已提供账号/机构/场馆和隔离PostgreSQL基线，但没有可登记、撤销和观测的Edge/Device身份。负责人已正式确认本Change为下一阶段第一项业务实施主线；依据[P0/P1路线与决策补录](../../../../docs/planning/2026-11-10-p0-p1-roadmap.md)，先建设Cloud Edge Registry，为后续可信采集来源和Edge云接入提供边界，避免重建Tenant/Site或提前铺开媒体/Runtime。
 
 ## What Changes
 
@@ -30,7 +30,7 @@ main已提供账号/机构/场馆和隔离PostgreSQL基线，但没有可登记�
 
 ## Impact
 
-- 事实基线main@d7f1eed；输入为[ADR0003](../../../docs/decisions/0003-capture-media-domain-contracts.md)、[领域模型](../../../docs/architecture/cloud-capture-media-domain.md)与[API草案](../../../docs/contracts/cloud-capture-media.md)，不把它们当已实现。
+- 事实基线main@d7f1eed；输入为[ADR0003](../../../../docs/decisions/0003-capture-media-domain-contracts.md)、[领域模型](../../../../docs/architecture/cloud-capture-media-domain.md)与[API草案](../../../../docs/contracts/cloud-capture-media.md)，不把它们当已实现。
 - Apply触及services/cloud的模型/新增迁移、认证/路由/输入输出、安装与两后端测试、API/领域文档及OpenAPI快照；复用当前测试编排，不连旧库/生产库，不新增队列、GPU或对象存储依赖。
 - 现有六表、注册/机构/场馆API保持兼容；新增表的RESTRICT和权限集合须在迁移/回归中显式验证，不改写初始revision，不用关闭旧断言换取通过。
 - 已确认参数与边界见D11–D13；Apply按批准设计实现有界健康字段、幂等记录不自动淘汰等细节。长期离线恢复见Design的Future Considerations / Known Limitations。本轮不改主规格；Verify、Archive和本PR Merge各等后续授权。

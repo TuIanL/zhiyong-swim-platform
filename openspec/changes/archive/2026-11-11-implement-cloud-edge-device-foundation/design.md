@@ -2,9 +2,9 @@
 
 ## Context
 
-动机与唯一实施范围见[proposal](proposal.md)，路线与决策补录见[全项目审计](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。负责人已确认本Change为首项业务主线及D11–D13，并授权基于PR #4 head 334f589b66e22dc55716f5e6befb44d31e003cd1 进入Apply。ADR0003 D1–D10及D11–D13仍是设计输入，不能被误报为已实现。
+动机与唯一实施范围见[proposal](proposal.md)，路线与决策补录见[全项目审计](../../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。负责人已确认本Change为首项业务主线及D11–D13，并授权基于PR #4 head 334f589b66e22dc55716f5e6befb44d31e003cd1 进入Apply。ADR0003 D1–D10及D11–D13仍是设计输入，不能被误报为已实现。
 
-main@d7f1eed只有六表、19操作。[api.py](../../../services/cloud/src/swimplatform/api.py)已有identity/membership/manager/site_access和UTC瞬间归一逻辑；[models.py](../../../services/cloud/src/swimplatform/models.py)有Site复合唯一键；[PG schema测试](../../../services/cloud/tests/test_postgresql_schema.py)固定六表，现有[pg_support](../../../services/cloud/tests/pg_support.py)授权使用ALL TABLES语句。新增表时必须改为批准集合并扩展断言，不能删除六表回归或沿用自动授权任意表。
+main@d7f1eed只有六表、19操作。[api.py](../../../../services/cloud/src/swimplatform/api.py)已有identity/membership/manager/site_access和UTC瞬间归一逻辑；[models.py](../../../../services/cloud/src/swimplatform/models.py)有Site复合唯一键；[PG schema测试](../../../../services/cloud/tests/test_postgresql_schema.py)固定六表，现有[pg_support](../../../../services/cloud/tests/pg_support.py)授权使用ALL TABLES语句。新增表时必须改为批准集合并扩展断言，不能删除六表回归或沿用自动授权任意表。
 
 ## Goals / Non-Goals
 

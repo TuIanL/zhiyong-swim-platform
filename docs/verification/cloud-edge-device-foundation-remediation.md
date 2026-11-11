@@ -1,6 +1,6 @@
 # Cloud Edge Registry Verify 定向修复记录
 
-> 这是 Apply 后对首次独立 Verify 发现项 W1、W2、W3 的定向修复和回归证据记录，不是第二轮独立 Verify、Archive、主规格同步或 Merge 结论。首次 Verify 原文保留在 [verification.md](../../openspec/changes/implement-cloud-edge-device-foundation/verification.md)，未覆盖或改写。
+> 这是 Apply 后对首次独立 Verify 发现项 W1、W2、W3 的定向修复和回归证据记录，不是第二轮独立 Verify、Archive、主规格同步或 Merge 结论。首次 Verify 原文保留在 [verification.md](../../openspec/changes/archive/2026-11-11-implement-cloud-edge-device-foundation/verification.md)，未覆盖或改写。
 
 ## 基线与提交
 

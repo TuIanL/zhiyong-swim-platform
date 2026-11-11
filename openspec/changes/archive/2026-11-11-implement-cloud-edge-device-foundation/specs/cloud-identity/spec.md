@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Isolated database validation
-测试 SHALL 使用专用临时数据库执行新版迁移，应用启动 MUST 不自动迁移旧数据库或外部数据库。PostgreSQL 验证 SHALL 显式启用并只连接本次测试编排创建的可销毁实例。测试库 MUST 使用专用 schema（默认 `swim_cloud`），业务表与迁移版本表都落在该 schema 内；两个数据库身份 MUST 通过连接级 `search_path` 定位该 schema，不得在连接复用池上执行会话级 `SET` 后再依赖其残留。迁移与应用身份 MUST 分离：应用身份不得拥有超级用户、建库、建角色、表或 schema 所有权、临时表或绕过行级安全的权限，且不得与迁移身份存在角色成员关系。应用身份只 SHALL 获得该 schema 的 `USAGE`、明确批准表集合（原六张业务表及本Change新增的 `edge_nodes`、`devices`、`edge_credentials`、`idempotency_records`）的 `SELECT`/`INSERT`/`UPDATE`/`DELETE` 与迁移版本表的 `SELECT`；不得向其他未批准表授予DML。普通测试 MUST 不读取业务连接配置作为测试目标；运行结束或失败时 MUST 清理本次实例及其数据，且不得清理其他实例。
+测试 SHALL 使用专用临时数据库执行新版迁移，应用启动 MUST 不自动迁移旧库或外部数据库。PostgreSQL 验证 SHALL 只连接本次编排创建的可销毁实例；业务表与迁移版本表 MUST 位于专用schema（默认 `swim_cloud`）。迁移身份与应用身份 MUST 分离，普通测试 MUST 不把业务连接配置作为测试目标；成功或失败时均 MUST 只清理本次实例并显式报告。
 
 #### Scenario: Initialization points to external database
 - **WHEN** 本地开发初始化命令的目标不是新版 var 目录内的 SQLite 文件
@@ -14,8 +14,8 @@
 - **THEN** 编排入口与 PostgreSQL 测试环境初始化 MUST 各自在数据库连接或迁移前拒绝执行；即使环境变量格式完整合法，初始化仍 MUST 核验 Docker 实际容器 ID、名称、运行/owner 标签及 5432/tcp 回环端口映射，不回退到业务库，也不因数据库名带测试前缀而放行
 
 #### Scenario: Restricted application identity
-- **WHEN** PostgreSQL API 测试连接数据库并执行正常业务及权限探测
-- **THEN** 正常授权业务与迁移版本表读取 MUST 可用，应用身份 MUST 无法建表、临时建表、`CREATE SCHEMA`、改表、建索引、建角色、建库、`TRUNCATE`、写迁移版本表或通过 `SET ROLE` 切换为迁移身份
+- **WHEN** PostgreSQL API测试连接迁移身份和应用身份并执行正常业务及权限探测
+- **THEN** 两种身份 MUST 通过连接级 `search_path` 定位专用schema，不得在连接池上依赖会话级 `SET` 残留；应用身份不得拥有超级用户、建库、建角色、表或schema所有权、临时表或绕过行级安全的权限，且不得是迁移身份的成员；正常授权业务 MUST 可用，应用身份只 SHALL 获该schema的 `USAGE`、原六张与本Change新增四张批准业务表的 `SELECT`/`INSERT`/`UPDATE`/`DELETE` 和迁移版本表的 `SELECT`，不得对未批准表授予DML，且 MUST 无法建表、临时建表、`CREATE SCHEMA`、改表、建索引、建角色、建库、`TRUNCATE`、写迁移版本表或通过 `SET ROLE` 切换为迁移身份
 
 #### Scenario: Failure during test execution
 - **WHEN** PostgreSQL 环境初始化、连接、迁移或测试失败，或运行收到可捕获的终止信号
