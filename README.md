@@ -1,6 +1,6 @@
 # 智泳云枢 · 新版平台
 
-独立重建的游泳智能视频分析平台。首个开发切片是**账号、机构与场馆的云端基础**。
+独立重建的游泳智能视频分析平台。当前开发切片包含**账号、机构、场馆与 Cloud Edge Registry 基础**。
 
 仓库：[TuIanL/zhiyong-swim-platform](https://github.com/TuIanL/zhiyong-swim-platform)。产品需求与任务：[Notion 项目](https://app.notion.com/p/410f602574aa816ea4a6f2b06985d412)。
 
@@ -11,9 +11,10 @@
 - 机构成员管理及 owner/admin/coach/athlete 角色边界。
 - 场馆创建、列表、详情和修改；教练/学员通过明确场馆授权访问。
 - 服务器端机构/场馆归属检查、跨机构负向测试、专用测试库和独立初始迁移。
+- EdgeNode、Camera Device、EdgeCredential与持久幂等登记；提供管理员节点/设备管理、凭据签发/撤销和Edge heartbeat。
 - PostgreSQL 17 专用可销毁实例上的迁移、schema、最小权限、角色矩阵与并发事务验证（见下方“验证”）。
 
-这是本地开发基线，尚未完成商业化平台。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、审计日志、Edge、媒体/视频与模型接入均待后续建设；当前没有复制旧演示数据或接入真实学员资料。
+这是本地开发基线，尚未完成商业化平台。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、通用审计日志、Edge Runtime、训练会话/媒体上传与模型接入均待后续建设；当前没有复制旧演示数据或接入真实学员资料。
 
 ## 启动
 
@@ -61,7 +62,7 @@ docker ps -a --filter label=com.zhiyong.swim-pg-test.run --format '{{.Names}}'
 docker rm --force swim-pg-test-<run id>
 ```
 
-每项集成测试在隔离临时库内执行新版迁移，不连接旧库。当前 SQLite 覆盖注册角色注入、密码与会话、账号锁定、机构隔离、场馆授权/撤销、成员移除、复合外键、迁移一致性与安全初始化；PostgreSQL 另有 schema `swim_cloud` 落点、六表约束与级联、迁移中断回滚、应用身份最小权限、角色矩阵、连接复用与并发事务证据。结论以[PostgreSQL 验证报告](docs/verification/cloud-foundation-postgresql.md)中的提交与环境为准；RLS 与生产部署仍未验证。
+每项集成测试在隔离临时库内执行新版迁移，不连接旧库。当前revision `20261110_0002`保留 `20261106_0001` 的六表基础，并递增增加四张Registry表；API快照为21 paths / 31 operations，内含既有19项基础操作和新增12项Registry操作。SQLite覆盖原身份/机构/场馆回归及Registry模型、API、凭据和心跳；专用PostgreSQL套件扩展迁移往返、十表最小权限、拒绝未批准表及独立连接并发证据。当前Change的实际测试结果见[Cloud Edge Registry Apply报告](docs/verification/cloud-edge-device-foundation-apply.md)，六表基线结果仍见[历史PostgreSQL报告](docs/verification/cloud-foundation-postgresql.md)；RLS 与生产部署仍未验证。
 
 ## 结构
 
@@ -75,7 +76,7 @@ configs/              非敏感配置与模型选型记录
 var/                  本地开发数据（不提交）
 ```
 
-已创建新版专属 `.venv`，独立安装依赖并构建/安装项目 wheel，没有复用旧 `.conda` 或 `.env`、也没有向全局安装依赖。依赖锁记录本轮验证组合；依赖漏洞审计与其他操作系统仍需验证；PostgreSQL 已在专用实例验证，RLS、生产部署与生产数据操作仍未验证。开发脚本显式使用新版源码与环境；源码改动后无需重新安装 wheel。
+已创建新版专属 `.venv`，独立安装依赖并构建/安装项目 wheel，没有复用旧 `.conda` 或 `.env`、也没有向全局安装依赖。依赖锁记录本轮验证组合；依赖漏洞审计与其他操作系统仍需验证；PostgreSQL 证据按当前Apply提交的CI报告记录，RLS、生产部署与生产数据操作仍未验证。开发脚本显式使用新版源码与环境；源码改动后无需重新安装 wheel。
 
 本机曾出现隐藏 `.pth` 被 Python3.13 忽略的可编辑安装问题，已通过正常 wheel 安装及显式源码开发入口验证；打包回归用例防止 pytest 的源码路径掩盖安装问题。
 

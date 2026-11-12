@@ -127,4 +127,4 @@ coach与athlete使用相同的非管理角色分支，但已有场景主要创�
 
 - RLS 未实施，本节所有“隔离”结论均为应用层授权与连接上下文，不是数据库行级安全。
 - 撤销权限与并发写入同时发生的竞态、跨机构并发更新、连接池饱和行为未验证。
-- 平台管理员、所有权转移、审计日志、Web/Edge/媒体仍未实现。
+- 平台管理员、所有权转移、通用审计日志、Edge Runtime与媒体仍未实现；Cloud Edge Registry已有独立Owner/Admin登记权限和仅限本节点heartbeat的Edge身份，详见[Registry契约](cloud-edge-registry.md)。

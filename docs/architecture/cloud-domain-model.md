@@ -2,9 +2,9 @@
 
 登记日期：2026-11-06；事实代码基线：`7082b729785957252ff5797a057f3151c6dd25c2`。本文件发布于 `formalize-cloud-foundation-baseline` apply，承接已确认草案；最终验证/评审状态见[变更记录](../verification/cloud-foundation-baseline.md)，不代表全平台领域模型已冻结。
 
-## 当前六表ERD及归属约束
+## 初始六表revision ERD及归属约束
 
-以下ERD描述当前模型，不是待执行DDL。关系依据[模型](../../services/cloud/src/swimplatform/models.py)及[初始迁移](../../services/cloud/migrations/versions/20261106_0001_cloud_identity.py)；所有UUID均以36字符字符串持久化。
+以下ERD描述revision 20261106_0001的六表基础模型，不是当前完整head的ERD。当前head `20261110_0002`另含Edge Registry四表，见[Cloud Edge Registry模型](cloud-edge-registry-domain.md)。关系依据[模型](../../services/cloud/src/swimplatform/models.py)及[初始迁移](../../services/cloud/migrations/versions/20261106_0001_cloud_identity.py)；所有UUID均以36字符字符串持久化。
 
 ```mermaid
 erDiagram
@@ -103,16 +103,16 @@ UUID标识使用String(36)，token摘要使用String(64)。`users.locked_until`�
 | 机构成员及角色 | 已实现；tenant_memberships是机构授权依据，创建机构同时创建owner | 请求中的角色或前端菜单不是权威；没有所有权转移/唯一owner并发约束 |
 | 场馆与机构归属 | 已实现；sites.tenant_id及复合外键约束资源归属，不能经场馆PATCH改机构 | 不支持跨机构搬迁场馆或历史资源迁移 |
 | 普通成员场馆授权 | 已实现；site_memberships与机构成员关系共同决定访问，管理角色另有机构级权限 | 撤销管理员的显式场馆关系不取消其机构管理权；见[RBAC](../contracts/cloud-rbac.md) |
-| 标识与schema版本 | 已实现UUID字符串标识和Alembic revision `20261106_0001`；API `/api/v1`、应用0.1.0 | 没有业务revision/ETag、离线快照版本或跨端冲突协议 |
+| 标识与schema版本 | UUID字符串标识；20261106_0001为初始六表基线，当前head为20261110_0002；API /api/v1、应用0.1.0 | 没有业务revision/ETag、离线快照版本或跨端冲突协议 |
 
-当前云端保存账号、成员和场馆配置，尚不存在Edge副本、离线授权缓存或双向同步。下表链接的采集/媒体文档方向已通过2026-11-09第二轮Proposal技术审阅，但文件仍为v0.1-draft且没有业务实现。云端是TrainingSession最终业务权威不排斥Edge离线生成临时记录并在恢复联网后同步；身份映射、授权重验及冲突协议另开Change。未来Site/Tenant删除也不得经级联抹除历史Session/Asset、来源或仍需保留的内容引用；保留期限和物理清理尚未确定。
+当前云端已有Node/Camera登记和heartbeat观测，但尚不存在Edge Runtime副本、离线授权缓存或双向同步。采集媒体文档仍是v0.1设计输入；TrainingSession和VideoAsset没有业务实现。云端是TrainingSession最终业务权威不排斥Edge离线生成临时记录并在恢复联网后同步；身份映射、授权重验及冲突协议另开Change。未来Site/Tenant删除也不得经级联抹除历史Session/Asset、来源或仍需保留的内容引用；保留期限和物理清理尚未确定。
 
 ## 未实现实体与后续提案边界
 
 | 后续实体 | 当前状态 | 后续需要评审的边界 |
 | --- | --- | --- |
 | Pool / Lane | 未实现，无表/接口；待组织模型提案 | 场馆内资源归属、稳定ID、归档/重命名及被历史训练引用时的策略 |
-| EdgeNode / Device | 未实现，无设备身份/接入；设计方向见[采集/媒体领域草案](cloud-capture-media-domain.md)与[ADR 0003](../decisions/0003-capture-media-domain-contracts.md)，v0.1-draft | tenant/site绑定、设备凭据撤销、配置版本和设备来源；搬迁重新登记并保留历史来源，离线协议另行设计 |
+| EdgeNode / Device / EdgeCredential | Cloud Edge Registry已实现Node/Camera登记、独立凭据、撤销和心跳观测；见[实现模型](cloud-edge-registry-domain.md)。第一版仅camera，Camera随跟拍车移动；无Cart实体或运动控制 | 其他Device.kind、控制器/底盘遥测、Edge Runtime、离线身份与同步协议仍需另行设计 |
 | Athlete / Coach业务档案与关系 | 未实现；当前只有账号成员role，待业务授权提案 | 全局账号与机构档案分离、教练学员关系及跨场馆显式授权 |
 | TrainingSession / VideoAsset | 未实现，无采集/上传、无表无接口；设计方向见[采集/媒体领域草案](cloud-capture-media-domain.md)、[API契约草案](../contracts/cloud-capture-media.md)与[ADR 0003](../decisions/0003-capture-media-domain-contracts.md)，v0.1-draft | tenant/site固定归属、云端Session最终状态与Edge离线临时记录、资源级读取授权、采集时间来源及Site/Tenant历史保留；实施仍需独立Change |
 | AnalysisTask / AnalysisResult / Report | 未实现，无新版分析任务；待流水线提案 | 锁定输入版本，记录模型/规则/schema版本，任务身份、产物权限和重算策略 |

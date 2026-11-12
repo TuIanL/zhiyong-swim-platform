@@ -2,7 +2,7 @@
 
 登记日期：2026-11-06；事实代码基线：`7082b729785957252ff5797a057f3151c6dd25c2`。本文件发布于 `formalize-cloud-foundation-baseline` apply；实现仍为本地开发切片，未完成生产验收，不是商业平台总体设计的最终冻结。
 
-完整授权矩阵见[RBAC契约](cloud-rbac.md)，六表归属见[领域模型](../architecture/cloud-domain-model.md)，本次验证与历史结果见[追溯记录](../verification/cloud-foundation-baseline.md)。
+本文件只描述初始账号/机构/场馆19个操作，实际代码和契约仍保持兼容。已新增Cloud Edge Registry 12个操作，见[Registry API契约](cloud-edge-registry.md)；当前总计21 paths / 31 operations。完整授权矩阵见[RBAC契约](cloud-rbac.md)，六表归属见[领域模型](../architecture/cloud-domain-model.md)，本次验证与历史结果见[追溯记录](../verification/cloud-foundation-baseline.md)。
 
 ## 身份与会话
 

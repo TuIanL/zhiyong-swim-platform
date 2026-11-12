@@ -467,6 +467,9 @@ def run_pytest(environment: dict[str, str], junit: Path, basetemp: Path, extra: 
         "--cloud-backend=postgresql",
         f"--cloud-pg-minimum-scenarios={minimum}",
         f"--junitxml={junit}",
+        # xunit2 warns that pytest's record_property fixture is incompatible and drops
+        # machine-readable backend-PID evidence from the uploaded concurrency report.
+        "-o", "junit_family=xunit1",
         # 独立 basetemp，避免与并发会话共用系统临时目录。
         f"--basetemp={basetemp}",
         "-p", "no:cacheprovider",

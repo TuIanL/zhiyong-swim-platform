@@ -223,6 +223,23 @@ def test_docker_rm_failure_raises(monkeypatch):
         harness.Docker().remove('target')
 
 
+def test_postgresql_junit_uses_record_property_compatible_family(monkeypatch, tmp_path):
+    import subprocess
+    captured = {}
+
+    def run(command, **kwargs):
+        captured['command'] = command
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(harness.subprocess, 'run', run)
+    junit = tmp_path / 'pg-junit.xml'
+    basetemp = tmp_path / 'pg-temp'
+    assert harness.run_pytest({}, junit, basetemp, []) == 0
+    command = captured['command']
+    option_index = command.index('junit_family=xunit1')
+    assert command[option_index - 1] == '-o'
+
+
 class CleanupFailureDocker(FakeDocker):
     def __init__(self, problem):
         super().__init__(container_info())

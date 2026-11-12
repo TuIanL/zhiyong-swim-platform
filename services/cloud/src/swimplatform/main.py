@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -6,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .api import router
 from .config import Settings
 from .database import database
+from .edge_registry import router as edge_registry_router
 
 
 def create_app(settings: Settings | None = None):
@@ -20,7 +22,9 @@ def create_app(settings: Settings | None = None):
 
     app = FastAPI(title="智泳云枢｜新版云端基础", version="0.1.0", lifespan=lifespan)
     app.state.settings, app.state.engine, app.state.sessions = settings, engine, sessions
+    app.state.clock = lambda: datetime.now(UTC)
     app.include_router(router)
+    app.include_router(edge_registry_router)
 
     @app.get("/health")
     def health():

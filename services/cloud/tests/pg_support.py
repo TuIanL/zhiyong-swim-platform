@@ -40,6 +40,10 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ADMIN_USER = "swim_admin"
 MIGRATION_USER = "swim_migrator"
 APP_USER = "swim_app"
+APPROVED_APP_TABLES = (
+    "users", "auth_sessions", "tenants", "tenant_memberships", "sites", "site_memberships",
+    "edge_nodes", "devices", "edge_credentials", "idempotency_records",
+)
 
 # 连接池配置按用途分开：顺序复用与真实并发不能共用同一组参数。
 REUSE_POOL = {"pool_size": 1, "max_overflow": 0, "pool_timeout": 5}
@@ -299,7 +303,7 @@ class PgEnvironment:
         return database
 
     def grant_application(self, database: PgDatabase) -> None:
-        """应用身份只拿 schema USAGE、六表 DML 与版本表 SELECT。"""
+        """应用身份只拿 schema USAGE、明确批准的十表 DML 与版本表 SELECT。"""
         with self.admin(database.name) as connection:
             connection.execute(
                 sql.SQL("REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(sql.Identifier(SCHEMA))
@@ -309,11 +313,12 @@ class PgEnvironment:
                     sql.Identifier(SCHEMA), sql.Identifier(self.app_user)
                 )
             )
-            connection.execute(
-                sql.SQL(
-                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {}"
-                ).format(sql.Identifier(SCHEMA), sql.Identifier(self.app_user))
-            )
+            for table in APPROVED_APP_TABLES:
+                connection.execute(
+                    sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {}.{} TO {}").format(
+                        sql.Identifier(SCHEMA), sql.Identifier(table), sql.Identifier(self.app_user)
+                    )
+                )
             if database.migrated:
                 version_table = sql.SQL("{}.{}").format(
                     sql.Identifier(SCHEMA), sql.Identifier("alembic_version")
