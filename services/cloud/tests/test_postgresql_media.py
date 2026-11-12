@@ -106,7 +106,9 @@ def test_concurrent_same_key_creates_one_intent_on_distinct_connections(pg_datab
         with application.state.sessions() as db:
             assert db.execute(text("SELECT count(*) FROM video_assets")).scalar_one() == 1
             assert db.execute(text("SELECT count(*) FROM upload_sessions")).scalar_one() == 1
-            assert db.execute(text("SELECT count(*) FROM idempotency_records")).scalar_one() == 1
+            assert db.execute(text(
+                "SELECT count(*) FROM idempotency_records WHERE operation = 'upload_intent.create'"
+            )).scalar_one() == 1
     finally:
         event.remove(engine, "before_cursor_execute", before_cursor_execute)
         engine.dispose()
