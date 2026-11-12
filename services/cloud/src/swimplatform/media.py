@@ -170,16 +170,18 @@ def lock_session(db: Session, tenant_id, site_id, session_id) -> TrainingSession
     return db.scalar(query)
 
 
-def lock_upload(db: Session, upload_id: str) -> UploadSession | None:
-    query = select(UploadSession).where(
-        UploadSession.id == upload_id
-    ).execution_options(populate_existing=True)
+def lock_upload(db: Session, tenant_id, site_id, upload_id: str) -> UploadSession | None:
+    """只在调用者已授权的 tenant/site 范围内加锁，避免跨机构探测触发行锁。"""
+    scope = (
+        UploadSession.id == upload_id,
+        UploadSession.tenant_id == str(tenant_id),
+        UploadSession.site_id == str(site_id),
+    )
+    query = select(UploadSession).where(*scope).execution_options(populate_existing=True)
     if db.bind.dialect.name == "postgresql":
         query = query.with_for_update()
     else:
-        result = db.execute(
-            update(UploadSession).where(UploadSession.id == upload_id).values(updated_at=UploadSession.updated_at)
-        )
+        result = db.execute(update(UploadSession).where(*scope).values(updated_at=UploadSession.updated_at))
         if result.rowcount != 1:
             return None
     return db.scalar(query)
@@ -703,8 +705,8 @@ def read_upload_session(
 ):
     _, member = _scope(db, tenant_id, site_id, user)
     now = server_now(request)
-    upload = lock_upload(db, str(upload_session_id))
-    if not upload or upload.tenant_id != str(tenant_id) or upload.site_id != str(site_id):
+    upload = lock_upload(db, tenant_id, site_id, str(upload_session_id))
+    if not upload:
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
     session = get_session(db, tenant_id, site_id, UUID(upload.session_id))
     if not _user_can_touch_upload(db, upload, session, user, member, now):
@@ -720,8 +722,8 @@ def abort_upload_session(
 ):
     _, member = _scope(db, tenant_id, site_id, user)
     now = server_now(request)
-    upload = lock_upload(db, str(upload_session_id))
-    if not upload or upload.tenant_id != str(tenant_id) or upload.site_id != str(site_id):
+    upload = lock_upload(db, tenant_id, site_id, str(upload_session_id))
+    if not upload:
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
     session = get_session(db, tenant_id, site_id, UUID(upload.session_id))
     if not _user_can_touch_upload(db, upload, session, user, member, now):
@@ -780,13 +782,8 @@ def create_edge_upload_intent(
 
 
 def _edge_upload(db: Session, node, upload_id: str) -> UploadSession:
-    upload = lock_upload(db, upload_id)
-    if (
-        not upload
-        or upload.tenant_id != node.tenant_id
-        or upload.site_id != node.site_id
-        or upload.initiator_edge_node_id != node.id
-    ):
+    upload = lock_upload(db, node.tenant_id, node.site_id, upload_id)
+    if not upload or upload.initiator_edge_node_id != node.id:
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
     return upload
 
