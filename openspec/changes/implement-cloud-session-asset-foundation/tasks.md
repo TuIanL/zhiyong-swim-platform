@@ -1,49 +1,51 @@
 # Tasks
 
-本清单全部未勾选。Q10–Q13 已由负责人 2026-11-12 审阅确认（受授人仅 coach、Edge 意图留 M2、服务端 24h/7d 且客户端不可指定、接受 M2 无 ready），P1-1—P1-4 四项审阅意见已并入下列任务，结构仍为 28 项。
+本清单 28 项已于 2026-11-12 全数完成并勾选。Q10–Q13 已由负责人 2026-11-12 审阅确认（受授人仅 coach、Edge 意图留 M2、服务端 24h/7d 且客户端不可指定、接受 M2 无 ready），P1-1—P1-4 已并入下列任务。
+
+实施 head `1476f9847410c4e14526e08f2395a3f4ef6928f7`；本机 SQLite 232 tests / 0 failures / 59 skipped；CI push run [43243735161](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243735161) 与 pull_request run [43243723165](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243723165) 的 `test` 与 `PostgreSQL 17 validation` 全部 success。逐项证据见[实施与验证报告](../../../docs/verification/cloud-session-asset-foundation-apply.md)。
 
 ## 1. 迁移与物理模型
 
-- [ ] 1.1 新增 revision `20261112_0003`（`down_revision=20261110_0002`）创建 `training_sessions`、`video_assets`、`upload_sessions`、`session_read_grants`、`asset_read_grants`，含 design 的复合唯一键、复合外键（一律 RESTRICT）、CHECK、部分唯一索引与查询索引；不改写 0001/0002。验证：两后端空库 0001→head 后反射列、约束、索引与模型一致，且 `models.py` 类与 design 字段表逐行一致
-- [ ] 1.2 扩展 `idempotency_records` 且保证既有数据无损：新增 `actor_kind`（`NOT NULL DEFAULT 'user'` 回填）、`edge_node_id`，`user_id` 改可空，加主体配对 CHECK、节点复合外键、`operation`/`resource_kind` 词表、两条部分唯一索引并删除原唯一约束；原 `key_hash`/`request_hash`/资源引用原样保留。验证：迁移前后 User 主体记录数一致、摘要不变；含历史幂等数据的库上 12 个 Registry 幂等用例断言不改即通过；两后端 head→0002→head 往返后行数与摘要不变
-- [ ] 1.3 实现降级守卫：存在 `actor_kind='edge_node'`、或新 `operation`、或新 `resource_kind` 的记录时，降级到 0002 MUST 显式失败并给出计数与分类，不得截断/忽略/改写。验证：三类记录各一条降级拒绝用例 + 纯 User 数据可正常降级用例
-- [ ] 1.4 把应用测试身份的批准表集合由 10 张扩到 15 张（`pg_support.APPROVED_APP_TABLES`、`test_postgresql_schema` 集合断言、`test_postgresql_identity` 行数断言），保持 `USAGE`、版本表仅 `SELECT`、DDL/TRUNCATE/SET ROLE 拒绝。验证：未批准 canary 表仍无 DML，15 张表正常读写
-- [ ] 1.5 增加历史保护与受控回滚用例：带 Session/Asset 的 Site 删除被 RESTRICT 拒绝；在 `actor_kind` 回填之后、唯一索引替换之前注入失败，验证整表重建回滚、版本标记不推进、旧约束仍生效。验证：两后端各一条负向用例通过
+- [x] 1.1 新增 revision `20261112_0003`（`down_revision=20261110_0002`）创建 `training_sessions`、`video_assets`、`upload_sessions`、`session_read_grants`、`asset_read_grants`，含 design 的复合唯一键、复合外键（一律 RESTRICT）、CHECK、部分唯一索引与查询索引；不改写 0001/0002。验证：两后端空库 0001→head 后反射列、约束、索引与模型一致，且 `models.py` 类与 design 字段表逐行一致
+- [x] 1.2 扩展 `idempotency_records` 且保证既有数据无损：新增 `actor_kind`（`NOT NULL DEFAULT 'user'` 回填）、`edge_node_id`，`user_id` 改可空，加主体配对 CHECK、节点复合外键、`operation`/`resource_kind` 词表、两条部分唯一索引并删除原唯一约束；原 `key_hash`/`request_hash`/资源引用原样保留。验证：迁移前后 User 主体记录数一致、摘要不变；含历史幂等数据的库上 12 个 Registry 幂等用例断言不改即通过；两后端 head→0002→head 往返后行数与摘要不变
+- [x] 1.3 实现降级守卫：存在 `actor_kind='edge_node'`、或新 `operation`、或新 `resource_kind` 的记录时，降级到 0002 MUST 显式失败并给出计数与分类，不得截断/忽略/改写。验证：三类记录各一条降级拒绝用例 + 纯 User 数据可正常降级用例
+- [x] 1.4 把应用测试身份的批准表集合由 10 张扩到 15 张（`pg_support.APPROVED_APP_TABLES`、`test_postgresql_schema` 集合断言、`test_postgresql_identity` 行数断言），保持 `USAGE`、版本表仅 `SELECT`、DDL/TRUNCATE/SET ROLE 拒绝。验证：未批准 canary 表仍无 DML，15 张表正常读写
+- [x] 1.5 增加历史保护与受控回滚用例：带 Session/Asset 的 Site 删除被 RESTRICT 拒绝；在 `actor_kind` 回填之后、唯一索引替换之前注入失败，验证整表重建回滚、版本标记不推进、旧约束仍生效。验证：两后端各一条负向用例通过
 
 ## 2. 领域行为与授权
 
-- [ ] 2.1 实现统一授权谓词构造器，供列表、详情、子列表、游标续页共用，覆盖 S-read / S-manage / A-read、owner/admin 免 SiteMembership，并**在每个请求上要求非管理路径的当前角色为 `coach`**（不使用登录快照，授予时的角色检查不作为替代）。验证：授权矩阵逐格测试（owner/admin/coach/athlete/非成员/匿名 × 六类资源操作）；Coach 创建后降级为 athlete 并保留 SiteMembership 时，Session 读取、Asset 读取与 PATCH 全部 404，且存在未过期 grant 也不放行
-- [ ] 2.2 实现 Session 创建与读取（含 `created_by_user_id` 由云端写入、归属不可变、请求自报字段 422）。验证：创建/越权归属/跨机构/跨场馆用例通过
-- [ ] 2.3 实现 Session PATCH 状态机（planned→recording→completed、planned/recording→cancelled、终态不可回退、同状态重放 200 无副作用）与加锁后判定。验证：状态-时间组合 CHECK 用例与非法迁移 409 用例通过
-- [ ] 2.4 实现取消收口：单事务内终结未完成上传并失败其 pending 资产，且 cancelled 会话再建上传意图返回 409。验证：取消后无 `pending_upload` 残留；取消 vs 中止两个方向各一条用例只有一方获胜且原因不被改写
-- [ ] 2.5 实现用户上传意图：**单事务内写 Asset + UploadSession + 幂等记录后一次提交**（不得三次独立提交），`S-manage`、发起人=自己；completed 会话允许补传且不回退状态。验证：三处失败注入后三者均不存在；同键同参返回同一 ID、同键异参 409；completed 补传 201 且 `completed_at` 不变
-- [ ] 2.6 实现 Edge 上传意图（节点凭据、Session 同 tenant/site、device 属该节点且 active），并证明设备来源与场馆一致性。验证：跨场馆 device、disabled device、跨节点 device 各返回既定 404/409 且不留下记录
-- [ ] 2.7 实现上传会话读取、中止与懒物化过期（`expires_at` 仅由服务端派生，默认 24 小时、上限 7 天，请求模型无 TTL 字段且未知字段 422）。验证：可控时钟下过期读取返回 `expired` 且 Asset 为 `failed(upload_expired)`；重复中止 204 不重写首次原因与时间；携带 `expires_at`/`ttl` 的请求 422
-- [ ] 2.8 实现 Session/Asset grant 的 upsert 与软撤销（保留首次 `granted_at`/`granted_by`，重复撤销不覆盖）。验证：重复 PUT 只留一条有效记录；重复 DELETE 204 且执行者与时间不变；过期 grant 不生效但记录保留
-- [ ] 2.9 实现采集时间与声明值校验（原始字符串字面值、四类基准交叉规则、`unknown` 禁 UTC、`ready ⇒ checksum/received_at/size/media_type 非空`）。验证：每种基准的合法/非法组合各一条 422 用例，原始字符串含首尾空格往返不变
-- [ ] 2.10 实现过滤式游标分页（`created_at DESC, id DESC`、默认 20/上限 100、游标绑定 scope+筛选+排序版本、无 `total_count`）。验证：撤权后续页只返回当前可见项；跨场馆或跨筛选复用游标返回 422 `invalid_cursor`
-- [ ] 2.11 实现并集中错误码与检查次序（401→404 机构→404 场馆→404 资源→403 能力；管理类先验角色）。验证：错误目录逐码有用例，且响应体不含未授权资源字段
+- [x] 2.1 实现统一授权谓词构造器，供列表、详情、子列表、游标续页共用，覆盖 S-read / S-manage / A-read、owner/admin 免 SiteMembership，并**在每个请求上要求非管理路径的当前角色为 `coach`**（不使用登录快照，授予时的角色检查不作为替代）。验证：授权矩阵逐格测试（owner/admin/coach/athlete/非成员/匿名 × 六类资源操作）；Coach 创建后降级为 athlete 并保留 SiteMembership 时，Session 读取、Asset 读取与 PATCH 全部 404，且存在未过期 grant 也不放行
+- [x] 2.2 实现 Session 创建与读取（含 `created_by_user_id` 由云端写入、归属不可变、请求自报字段 422）。验证：创建/越权归属/跨机构/跨场馆用例通过
+- [x] 2.3 实现 Session PATCH 状态机（planned→recording→completed、planned/recording→cancelled、终态不可回退、同状态重放 200 无副作用）与加锁后判定。验证：状态-时间组合 CHECK 用例与非法迁移 409 用例通过
+- [x] 2.4 实现取消收口：单事务内终结未完成上传并失败其 pending 资产，且 cancelled 会话再建上传意图返回 409。验证：取消后无 `pending_upload` 残留；取消 vs 中止两个方向各一条用例只有一方获胜且原因不被改写
+- [x] 2.5 实现用户上传意图：**单事务内写 Asset + UploadSession + 幂等记录后一次提交**（不得三次独立提交），`S-manage`、发起人=自己；completed 会话允许补传且不回退状态。验证：三处失败注入后三者均不存在；同键同参返回同一 ID、同键异参 409；completed 补传 201 且 `completed_at` 不变
+- [x] 2.6 实现 Edge 上传意图（节点凭据、Session 同 tenant/site、device 属该节点且 active），并证明设备来源与场馆一致性。验证：跨场馆 device、disabled device、跨节点 device 各返回既定 404/409 且不留下记录
+- [x] 2.7 实现上传会话读取、中止与懒物化过期（`expires_at` 仅由服务端派生，默认 24 小时、上限 7 天，请求模型无 TTL 字段且未知字段 422）。验证：可控时钟下过期读取返回 `expired` 且 Asset 为 `failed(upload_expired)`；重复中止 204 不重写首次原因与时间；携带 `expires_at`/`ttl` 的请求 422
+- [x] 2.8 实现 Session/Asset grant 的 upsert 与软撤销（保留首次 `granted_at`/`granted_by`，重复撤销不覆盖）。验证：重复 PUT 只留一条有效记录；重复 DELETE 204 且执行者与时间不变；过期 grant 不生效但记录保留
+- [x] 2.9 实现采集时间与声明值校验（原始字符串字面值、四类基准交叉规则、`unknown` 禁 UTC、`ready ⇒ checksum/received_at/size/media_type 非空`）。验证：每种基准的合法/非法组合各一条 422 用例，原始字符串含首尾空格往返不变
+- [x] 2.10 实现过滤式游标分页（`created_at DESC, id DESC`、默认 20/上限 100、游标绑定 scope+筛选+排序版本、无 `total_count`）。验证：撤权后续页只返回当前可见项；跨场馆或跨筛选复用游标返回 422 `invalid_cursor`
+- [x] 2.11 实现并集中错误码与检查次序（401→404 机构→404 场馆→404 资源→403 能力；管理类先验角色）。验证：错误目录逐码有用例，且响应体不含未授权资源字段
 
 ## 3. 契约与文档
 
-- [ ] 3.1 重新生成 OpenAPI 快照并核对 33 paths / 47 operations，既有 31 个操作的路径、字段、错误不变。验证：快照与运行时 `openapi()` 逐路径比对通过
-- [ ] 3.2 更新[领域模型文档](../../../docs/architecture/cloud-capture-media-domain.md)：五张表标为已实现，UploadSession 标注「意图已实现、传输未实现」，派生创建与存储引用保持未实现。验证：文档「已实现/未实现」两栏与迁移和路由一致
-- [ ] 3.3 更新[API 契约文档](../../../docs/contracts/cloud-capture-media.md)：16 个操作标为已实现，part-urls/complete/playback-url 5 个标为 M3 未实现。验证：路径清单与 OpenAPI 快照一一对应
-- [ ] 3.4 在 [RBAC 契约](../../../docs/contracts/cloud-rbac.md) 增补 S-read / S-manage / A-read 矩阵、非管理路径的当前 coach 角色要求、403/404 分界与「场馆授权不等于资源授权」。验证：矩阵每一格都能指向至少一条测试
-- [ ] 3.5 在本 Change 内记录 M2/M3 边界、本片偏差清单与审阅修订记录（已实现 16 / M3 5 / 不实现项；P1-1—P1-4 落点）。验证：清单与 design 的偏差表、修订记录逐项一致
+- [x] 3.1 重新生成 OpenAPI 快照并核对 33 paths / 47 operations，既有 31 个操作的路径、字段、错误不变。验证：快照与运行时 `openapi()` 逐路径比对通过
+- [x] 3.2 更新[领域模型文档](../../../docs/architecture/cloud-capture-media-domain.md)：五张表标为已实现，UploadSession 标注「意图已实现、传输未实现」，派生创建与存储引用保持未实现。验证：文档「已实现/未实现」两栏与迁移和路由一致
+- [x] 3.3 更新[API 契约文档](../../../docs/contracts/cloud-capture-media.md)：16 个操作标为已实现，part-urls/complete/playback-url 5 个标为 M3 未实现。验证：路径清单与 OpenAPI 快照一一对应
+- [x] 3.4 在 [RBAC 契约](../../../docs/contracts/cloud-rbac.md) 增补 S-read / S-manage / A-read 矩阵、非管理路径的当前 coach 角色要求、403/404 分界与「场馆授权不等于资源授权」。验证：矩阵每一格都能指向至少一条测试
+- [x] 3.5 在本 Change 内记录 M2/M3 边界、本片偏差清单与审阅修订记录（已实现 16 / M3 5 / 不实现项；P1-1—P1-4 落点）。验证：清单与 design 的偏差表、修订记录逐项一致
 
 ## 4. PostgreSQL 专属验收
 
-- [ ] 4.1 用 `CONCURRENCY_POOL`（`pool_size=8`）与不同 `pg_backend_pid()` 验证四类并发：同键上传意图、取消 vs 中止、过期 vs 中止、同一资源 grant 并发写入。验证：每类断言两个以上不同 PID 且仅一个事务生效
-- [ ] 4.2 验证部分唯一索引与 RESTRICT 在真实写入下生效：重复有效 grant 被拒、撤销后可重新授予、父记录删除被拒、跨 Session 派生引用被拒。验证：PG 专属用例通过并记录约束名
-- [ ] 4.3 验证 15 表 schema 反射与本 Change 模型一致，且降级到 0002 后仅剩 10 表、重新升级恢复 15 表。验证：`test_postgresql_schema` 三段集合断言通过
+- [x] 4.1 用 `CONCURRENCY_POOL`（`pool_size=8`）与不同 `pg_backend_pid()` 验证四类并发：同键上传意图、取消 vs 中止、过期 vs 中止、同一资源 grant 并发写入。验证：每类断言两个以上不同 PID 且仅一个事务生效
+- [x] 4.2 验证部分唯一索引与 RESTRICT 在真实写入下生效：重复有效 grant 被拒、撤销后可重新授予、父记录删除被拒、跨 Session 派生引用被拒。验证：PG 专属用例通过并记录约束名
+- [x] 4.3 验证 15 表 schema 反射与本 Change 模型一致，且降级到 0002 后仅剩 10 表、重新升级恢复 15 表。验证：`test_postgresql_schema` 三段集合断言通过
 
 ## 5. 集成与交付证据
 
-- [ ] 5.1 跑完整 SQLite 与 PostgreSQL 套件，确认既有 19 基础操作与 12 Registry 操作行为不变、新增用例零跳过（除后端专属跳过）。验证：两后端全绿且 JUnit 无 failure/error
-- [ ] 5.2 产出本 Change 的实施验证报告（命令、结果、未验证项、M2 已知限制）。验证：报告区分 SQLite/PG、本机/CI，并显式列出「无 ready 路径」「资产可停留在 pending_upload」「无清扫作业」「无播放」
-- [ ] 5.3 同步 Notion 工程入口与六个原任务的回链（change、分支、提交、PR、范围、阶段、已确认决策、下一步），不改任务属性。验证：页面回读确认链接可达且未改状态/负责人/日期
-- [ ] 5.4 在同一分支与 Draft PR 提交实现、契约与证据，保持 Draft。验证：PR head 与本地分支一致、CI 对应当前 head
+- [x] 5.1 跑完整 SQLite 与 PostgreSQL 套件，确认既有 19 基础操作与 12 Registry 操作行为不变、新增用例零跳过（除后端专属跳过）。验证：两后端全绿且 JUnit 无 failure/error
+- [x] 5.2 产出本 Change 的实施验证报告（命令、结果、未验证项、M2 已知限制）。验证：报告区分 SQLite/PG、本机/CI，并显式列出「无 ready 路径」「资产可停留在 pending_upload」「无清扫作业」「无播放」
+- [x] 5.3 同步 Notion 工程入口与六个原任务的回链（change、分支、提交、PR、范围、阶段、已确认决策、下一步），不改任务属性。验证：页面回读确认链接可达且未改状态/负责人/日期
+- [x] 5.4 在同一分支与 Draft PR 提交实现、契约与证据，保持 Draft。验证：PR head 与本地分支一致、CI 对应当前 head
 
 ## Workflow follow-up
 

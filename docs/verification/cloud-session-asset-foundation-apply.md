@@ -3,7 +3,7 @@
 - 日期：2026-11-12（Asia/Shanghai）
 - Change：`implement-cloud-session-asset-foundation`
 - 分支：`feat/cloud-session-asset-foundation`
-- 实施 head：`8e7c7e8ce733ca2f3664c4a532b16fc2c30142a5`
+- 实施 head：`1476f9847410c4e14526e08f2395a3f4ef6928f7`（含 CI 发现的两处修复）
 - 批准基线：PR #5 审阅 head `d4b29efd756616fe6d6d5912599067ca0a79d2fd`（Proposal / Design / Spec Delta / Tasks）
 - 依据：负责人 2026-11-12 正式 Apply 授权，执行 28 项任务中的实施与验证部分；Verify / Archive / 主规格同步 / Merge 均未执行。
 
@@ -51,8 +51,9 @@
 | 环境 | 命令 | 结果 |
 | --- | --- | --- |
 | 本机 SQLite | `python -m pytest -q --junitxml=var/tmp/sqlite-junit.xml` | **232 tests / 0 failures / 0 errors / 59 skipped**（skip 全为 `postgresql` 标记） |
-| CI SQLite | 见第 6 节 | 待 CI 结果回填 |
-| CI PostgreSQL 17 | 见第 6 节 | 待 CI 结果回填 |
+| CI SQLite（`python -m pytest`） | run [43243735161](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243735161) | **success** |
+| CI PostgreSQL 17 | 同上 run 的 `PostgreSQL 17 validation` | **success**（共享用例 + PG 专属用例全部通过，含并发、降级守卫与 15 表权限） |
+| CI（pull_request 事件） | run [43243723165](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243723165) | 两个 job 均 **success** |
 
 本机无 Docker daemon，`scripts/test-postgresql.py` 无法启动专用实例，因此 PostgreSQL 专属用例（并发 PID、降级守卫、RESTRICT、部分唯一索引）只在 CI 执行；本机不声称这些场景通过。
 
@@ -70,12 +71,18 @@
 
 ## 6. CI 证据
 
-- 实施 head `8e7c7e8ce733ca2f3664c4a532b16fc2c30142a5`
-- run 与 job 结果：待回填（本报告先随实施提交，CI 完成后追加）
+- 实施 head `1476f9847410c4e14526e08f2395a3f4ef6928f7`（分支 `feat/cloud-session-asset-foundation`）
+- push 事件 run [43243735161](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243735161)：`test` 与 `PostgreSQL 17 validation` 均 success
+- pull_request 事件 run [43243723165](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243723165)：两个 job 均 success
+- CI 过程中发现并修复两处问题（均由失败注解定位，不是本地可复现项）：
+  1. PostgreSQL 升级路径重复创建 0002 已存在的 `ix_idempotency_records_resource`，导致 `DuplicateTable`；改为仅 SQLite 整表重建后重建该索引，并让 PG 降级不再删建它。
+  2. 单键并发用例把会话创建的幂等记录一起计数，导致 `assert 2 == 1` 误报；断言收窄为 `operation = 'upload_intent.create'`。
+- 另同步 `test_postgresql_identity.py` 的 head revision 断言（0002 → 0003），与 `test_cloud_foundation.py` 同类改动一致。
+- CI 失败注解能力在同一分支补齐：`scripts/report-pg-failures.py` 在失败时把 JUnit 中的失败场景与断言消息提升为 check 注解，便于直接定位，不改变测试结论。
 
 ## 7. 未验证与限制
 
-- 本机未运行 PostgreSQL 用例；PG 结论只来自 CI。
+- 本机无 Docker daemon，未运行 PostgreSQL 用例；PG 结论只来自 CI（文档已绑定具体 run）。
 - 未验证：真实对象存储、分片传输、整对象校验、播放 URL、真实学员数据、RLS、生产部署、浏览器端到端。
 - M2 内资产可合法停留在 `pending_upload`，且不存在 `ready`；这不是缺陷，是阶段边界。
 - 幂等记录不自动淘汰，容量与回收策略仍为后续门槛。
