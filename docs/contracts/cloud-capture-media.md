@@ -1,8 +1,8 @@
 # 云端采集与媒体 API 契约草案
 
-> **Session/Asset/Upload v0.1-draft；Cloud Edge Registry 的 Node/Device/Credential/Heartbeat 已另行实施**
+> **Session/Asset/Upload 意图 v0.2：16 个操作已实现；传输、校验与播放 5 个操作留给 M3**
 >
-> 本文的 TrainingSession、VideoAsset、UploadSession 与媒体授权/存储部分仍是经 2026-11-09 第二轮 Proposal 技术审阅通过的 API 设计方向，尚未实现。Cloud Edge Registry 由后续 `implement-cloud-edge-device-foundation` Change 实施，实际路由见[Registry API契约](cloud-edge-registry.md)。MediaBlob、Session/Asset grant、对象存储适配器和媒体校验服务仍未实现。
+> TrainingSession、VideoAsset、UploadSession（意图）与资源读取授权已由 `implement-cloud-session-asset-foundation` 于 2026-11-12 实施，实际路由以[OpenAPI 快照](openapi.json)为准。part-urls、complete、playback-url 仍未实现，MediaBlob、对象存储适配器与媒体校验服务不在本片。
 
 - OpenSpec Change：`define-cloud-capture-media-contracts`
 - 业务事实基线：`main@afb0e5fce4c187c8d3c3d5607d2a675375c2a04d`
@@ -10,7 +10,7 @@
 
 ## 1. 适用边界
 
-当前产品包含账号、机构、成员、场馆基础及 Cloud Edge Registry 共10张业务表、21 paths / 31 operations。基础身份的19个操作保持兼容，Registry 新增的12个已实现操作不再属于本文件的未实施范围，字段与错误以[Registry契约](cloud-edge-registry.md)及[OpenAPI快照](openapi.json)为准。本文件余下 TrainingSession、VideoAsset、UploadSession、授权及媒体存储路径仍是未来建议，未加入 OpenAPI。既有成功响应、Bearer 身份链和业务错误 envelope 仍以[基础契约](cloud-foundation.md)为准：应用错误建议继续使用 `{"detail":{"code":"...","message":"..."}}`。
+当前产品包含账号、机构、成员、场馆基础、Cloud Edge Registry 与本片共15张业务表、33 paths / 47 operations。基础身份的19个操作保持兼容，Registry 新增的12个已实现操作不再属于本文件的未实施范围，字段与错误以[Registry契约](cloud-edge-registry.md)及[OpenAPI快照](openapi.json)为准。本文件中标注「已实现」的 16 个操作已加入 OpenAPI；part-urls、complete、playback-url 仍是未来建议。既有成功响应、Bearer 身份链和业务错误 envelope 仍以[基础契约](cloud-foundation.md)为准：应用错误建议继续使用 `{"detail":{"code":"...","message":"..."}}`。
 
 所有 P 路径以 `/api/v1/tenants/{tenant_id}/sites/{site_id}` 为前缀。Edge 路径以 `/api/v1/edge` 为前缀并使用节点凭据；Edge token 不能当用户 Bearer 使用。请求/响应模型名与字段是草案方向，具体长度、分片限制、过期时间和校验库须由业务实施 Change 定案。
 
@@ -51,6 +51,8 @@ POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/playba
 
 Cloud Edge Registry 的11个用户管理操作和1个Edge heartbeat已由后续Change实施，见[当前Registry API契约](cloud-edge-registry.md)。以下仅列尚未实施的Session、Asset、grant、UploadSession操作；完整路径展开以便独立核对。资源不存在、跨机构或调用者不可读取时按不泄露策略返回404；明确的机构内角色不足返回403。以下规划操作均未进入现有OpenAPI。
 
+下表 21 个操作中，**16 个已于 2026-11-12 实现**（Session 的列表/创建/详情/修改、Session 资产子列表、Asset 详情、两类 read-grant 的 PUT/DELETE、上传意图的创建/读取/中止 × 用户与 Edge）；标注 **M3** 的 5 个未实现：`playback-url`、用户与 Edge 的 `part-urls`、用户与 Edge 的 `complete`。
+
 | 方法与路径 | 主体 / 范围 | 请求主要字段 | 成功响应 |
 | --- | --- | --- | --- |
 | GET `/api/v1/tenants/{tenant_id}/sites/{site_id}/training-sessions` | S-read 过滤后的调用者 | query: status、limit、cursor | 200 Page[SessionRead] |
@@ -59,20 +61,20 @@ Cloud Edge Registry 的11个用户管理操作和1个Edge heartbeat已由后续C
 | PATCH `/api/v1/tenants/{tenant_id}/sites/{site_id}/training-sessions/{session_id}` | S-manage | SessionPatch，仅 title/status | 200 SessionRead |
 | GET `/api/v1/tenants/{tenant_id}/sites/{site_id}/training-sessions/{session_id}/video-assets` | 先 S-read，再按 A-read | query: status、limit、cursor | 200 Page[AssetRead] |
 | GET `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}` | A-read | 无 | 200 AssetRead |
-| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/playback-url` | A-read 且 Asset ready | 无 | 200 PlaybackUrlRead，TTL ≤ 5 分钟 |
+| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/playback-url` | A-read 且 Asset ready | 无 | **M3**：200 PlaybackUrlRead，TTL ≤ 5 分钟 |
 | PUT `/api/v1/tenants/{tenant_id}/sites/{site_id}/training-sessions/{session_id}/read-grants/{user_id}` | Owner/Admin；目标为同机构且有 Site 访问权的 Coach | GrantPut，可选 expires_at | 204；赋予 S-read 并覆盖 Session 当前/未来资产 |
 | DELETE `/api/v1/tenants/{tenant_id}/sites/{site_id}/training-sessions/{session_id}/read-grants/{user_id}` | Owner/Admin | 无 | 204；移除这一授权路径 |
 | PUT `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/read-grants/{user_id}` | Owner/Admin；目标为同机构且有 Site 访问权的 Coach | GrantPut，可选 expires_at | 204；只赋予目标 Asset 的 A-read |
 | DELETE `/api/v1/tenants/{tenant_id}/sites/{site_id}/video-assets/{asset_id}/read-grants/{user_id}` | Owner/Admin | 无 | 204；移除这一授权路径 |
 | POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/training-sessions/{session_id}/upload-sessions` | S-manage 用户；只能以自己为发起人 | UploadIntentCreate | 201 UploadIntentRead + 初始 AssetRead |
 | GET `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}` | 原发起用户且有 S-manage | 无 | 200 UploadSessionRead + 已确认分片 |
-| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/part-urls` | 原发起用户且有 S-manage | PartUrlRequest | 200 PartUrlRead 数组 |
-| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/complete` | 原发起用户且有 S-manage | CompleteRequest | 202 completing 或 200 completed + AssetRead |
+| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/part-urls` | 原发起用户且有 S-manage | PartUrlRequest | **M3**：200 PartUrlRead 数组 |
+| POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/complete` | 原发起用户且有 S-manage | CompleteRequest | **M3**：202 completing 或 200 completed + AssetRead |
 | POST `/api/v1/tenants/{tenant_id}/sites/{site_id}/upload-sessions/{upload_session_id}/abort` | 原发起用户且有 S-manage | 无 | 204 |
 | POST `/api/v1/edge/sessions/{session_id}/upload-sessions` | 有效节点凭据；Session 同 tenant/site，Device 属于该节点且 active | EdgeUploadIntentCreate | 201 UploadIntentRead + 初始 AssetRead |
 | GET `/api/v1/edge/upload-sessions/{upload_session_id}` | 原发起节点、有效凭据 | 无 | 200 UploadSessionRead + 已确认分片 |
-| POST `/api/v1/edge/upload-sessions/{upload_session_id}/part-urls` | 原发起节点、有效凭据 | PartUrlRequest | 200 PartUrlRead 数组 |
-| POST `/api/v1/edge/upload-sessions/{upload_session_id}/complete` | 原发起节点、有效凭据 | CompleteRequest | 202 completing 或 200 completed + AssetRead |
+| POST `/api/v1/edge/upload-sessions/{upload_session_id}/part-urls` | 原发起节点、有效凭据 | PartUrlRequest | **M3**：200 PartUrlRead 数组 |
+| POST `/api/v1/edge/upload-sessions/{upload_session_id}/complete` | 原发起节点、有效凭据 | CompleteRequest | **M3**：202 completing 或 200 completed + AssetRead |
 | POST `/api/v1/edge/upload-sessions/{upload_session_id}/abort` | 原发起节点、有效凭据 | 无 | 204 |
 
 首版不提供 Edge 全局结束 Session 的端点、不提供四实体 DELETE，也不提供 Edge 对其他节点上传的接管/完成/中止操作。Edge 只为自己发起的上传会话续传、查询和确认。

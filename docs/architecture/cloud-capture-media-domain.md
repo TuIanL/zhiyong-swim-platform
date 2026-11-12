@@ -1,8 +1,8 @@
 # 云端采集与媒体领域模型
 
-> **v0.1-draft／部分实现**
+> **v0.2／Session、Asset、UploadSession 意图与资源授权已实现；传输与 ready 未实现**
 >
-> 本文记录负责人于 2026-11-09 第二轮 Proposal 技术审阅通过的设计方向。EdgeNode、Camera Device、EdgeCredential已由implement-cloud-edge-device-foundation增量实现；TrainingSession、VideoAsset、UploadSession、授权关系与媒体API仍未实现。其他未来设计仍须由各自业务Change实现。
+> 本文记录负责人于 2026-11-09 第二轮 Proposal 技术审阅通过的设计方向。EdgeNode、Camera Device、EdgeCredential 由 `implement-cloud-edge-device-foundation` 实现；TrainingSession、VideoAsset、UploadSession 的**意图与元数据**、SessionReadGrant/AssetReadGrant 由 `implement-cloud-session-asset-foundation` 实现（2026-11-12 Apply）。分片传输、整对象校验、ready 转换、播放 URL、对象存储与派生创建仍未实现，须由各自业务 Change 交付。
 
 - OpenSpec Change：**define-cloud-capture-media-contracts**
 - Proposal 基线：**main@afb0e5fce4c187c8d3c3d5607d2a675375c2a04d**
@@ -13,7 +13,7 @@
 
 本草案原先设计EdgeNode、Device、TrainingSession、VideoAsset四个实体。EdgeNode、Camera Device与EdgeCredential现由独立Change实现；TrainingSession、VideoAsset、UploadSession仍是未来设计。训练编排、学员档案及关系、分析任务/结果、对象存储选型、离线同步协议、RLS、生产部署均不在范围内。
 
-当前已实现的云端包含初始六表以及Edge Registry四表；API为21 paths / 31 operations，其中基础身份19个，Edge Registry新增12个。Edge实现细节见[Cloud Edge Registry模型](cloud-edge-registry-domain.md)与[Registry API契约](../contracts/cloud-edge-registry.md)。本文中的TrainingSession、VideoAsset、UploadSession、授权及媒体存储图/字段/端点仍是未实施设计方向。
+当前已实现的云端包含15张业务表（初始六表、Edge Registry 四表、本片五表）；API为33 paths / 47 operations（基础身份19、Edge Registry 12、本片16）。Edge实现细节见[Cloud Edge Registry模型](cloud-edge-registry-domain.md)与[Registry API契约](../contracts/cloud-edge-registry.md)；本片行为见[媒体契约](../contracts/cloud-capture-media.md)与[RBAC契约](../contracts/cloud-rbac.md)。字段表中的 `storage_object_ref`、`received_at` 与 `ready` 状态仍属 M3；派生的公开创建路径与 `ready` 父级校验未实现。
 
 ## 2. 概念 ERD 与基数
 

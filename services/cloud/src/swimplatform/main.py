@@ -8,6 +8,7 @@ from .api import router
 from .config import Settings
 from .database import database
 from .edge_registry import router as edge_registry_router
+from .media import router as media_router
 
 
 def create_app(settings: Settings | None = None):
@@ -25,6 +26,7 @@ def create_app(settings: Settings | None = None):
     app.state.clock = lambda: datetime.now(UTC)
     app.include_router(router)
     app.include_router(edge_registry_router)
+    app.include_router(media_router)
 
     @app.get("/health")
     def health():

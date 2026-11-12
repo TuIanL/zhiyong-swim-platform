@@ -170,7 +170,7 @@ def test_migration_matches_models_and_ready(client, app):
     assert client.get("/health").status_code == 200
     assert client.get("/ready").status_code == 200
     with app.state.engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261110_0002"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261112_0003"
         assert compare_metadata(MigrationContext.configure(connection), Base.metadata) == []
 
 
