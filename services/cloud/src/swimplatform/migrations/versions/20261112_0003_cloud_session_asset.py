@@ -459,7 +459,12 @@ def create_media_tables():
     )
 
 
-def create_actor_aware_idempotency_indexes():
+def create_actor_aware_idempotency_indexes(*, include_resource_index: bool = False):
+    """两条部分唯一索引按主体分区。
+
+    PostgreSQL 路径保留 0002 已建的 ix_idempotency_records_resource；只有 SQLite
+    整表重建后需要重新创建它，否则会重复建索引。
+    """
     op.create_index(
         "uq_idempotency_user_scope_key", "idempotency_records",
         ["tenant_id", "site_id", "user_id", "operation", "target_id", "key_hash"],
@@ -472,7 +477,8 @@ def create_actor_aware_idempotency_indexes():
         sqlite_where=sa.text("actor_kind = 'edge_node'"),
         postgresql_where=sa.text("actor_kind = 'edge_node'"),
     )
-    op.create_index("ix_idempotency_records_resource", "idempotency_records", ["resource_kind", "resource_id"])
+    if include_resource_index:
+        op.create_index("ix_idempotency_records_resource", "idempotency_records", ["resource_kind", "resource_id"])
 
 
 def upgrade_postgres_idempotency():
@@ -528,7 +534,7 @@ def upgrade_sqlite_idempotency():
     )
     op.drop_table("idempotency_records")
     op.rename_table("idempotency_records_new", "idempotency_records")
-    create_actor_aware_idempotency_indexes()
+    create_actor_aware_idempotency_indexes(include_resource_index=True)
 
 
 def upgrade():
@@ -569,7 +575,6 @@ def guard_downgrade():
 
 
 def downgrade_postgres_idempotency():
-    op.drop_index("ix_idempotency_records_resource", table_name="idempotency_records")
     op.drop_index("uq_idempotency_edge_scope_key", table_name="idempotency_records")
     op.drop_index("uq_idempotency_user_scope_key", table_name="idempotency_records")
     op.drop_constraint("ck_idempotency_records_actor", "idempotency_records", type_="check")
