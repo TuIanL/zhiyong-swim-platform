@@ -68,7 +68,7 @@ main@57e91a5 的真实基线：10 张业务表、21 paths / 31 operations。可�
 | 操作类 | 次序 | 理由 |
 | --- | --- | --- |
 | 读取类（Session/Asset 详情、子列表、游标续页） | 先按 (tenant, site, id) 取资源，取不到 404；取到后若不具备 S-read/A-read 仍 404 | 不泄露「存在但你看不到」这一事实 |
-| 管理类（PATCH、grant PUT/DELETE、上传意图） | 先验角色与场馆（403/404），再按 scope 取资源（404） | 与既有 Registry 的 `require_manager_site` 一致；不因猜测 ID 获得资源存在性信息 |
+| 管理类（PATCH、grant PUT/DELETE、用户上传意图） | 先验角色与场馆（403/404），再按 scope 取资源（404） | 与既有 Registry 的 `require_manager_site` 一致；不因猜测 ID 获得资源存在性信息 |
 
 「已可读但无权写」是唯一返回 403 的读取侧情形：调用者具 S-read 但不是创建者也无 S-manage 时 PATCH 返回 403，因为该资源对他已公开可见，403 不增加泄漏。
 
@@ -206,7 +206,7 @@ Owner/Admin 不依赖 `site_memberships`；其范围是「当前 tenant 内全�
 | 列 | 类型/可空 | 约束 |
 | --- | --- | --- |
 | id | String(36) | 主键 |
-| tenant_id, site_id, session_id, asset_id | String(36) | `UNIQUE (asset_id)`；复合 FK `(tenant_id, site_id, session_id, asset_id)` → `video_assets` RESTRICT |
+| tenant_id, site_id, session_id, asset_id | String(36) | `UNIQUE (asset_id)`（`uq_upload_sessions_asset`）；复合 FK `(tenant_id, site_id, session_id, asset_id)` → `video_assets` RESTRICT |
 | status | String(16) | `uploading/completing/completed/failed/aborted/expired` |
 | initiator_user_id, initiator_edge_node_id | String(36) / 成对可空 | 恰一非空；用户 FK → `users` RESTRICT；节点复合 FK → `edge_nodes` RESTRICT |
 | failure_reason | String(32) / 可空 | 与 status 配对（终态失败类必须非空） |
@@ -214,7 +214,7 @@ Owner/Admin 不依赖 `site_memberships`；其范围是「当前 tenant 内全�
 | expected_sha256 | String(64) | 64 位小写十六进制 |
 | media_type | String(128) / 可空 | 声明值 |
 | expires_at | 非空 | `> created_at`；上限由服务端参数控制 |
-| completed_at | 可空 | 与本切片无关，`completed` ⇔ 非空 |
+| completed_at | 可空 | 本切片不产生；`completed` ⇔ 非空 |
 | created_at, updated_at | 非空 | 服务端写入 |
 
 索引：`(tenant_id, site_id, session_id, status, expires_at)`。
