@@ -39,24 +39,43 @@ Owner 与 Admin SHALL 在本机构全部场馆管理与读取 Session 与 Asset�
 - **WHEN** A 机构 Owner 使用 B 机构的 tenant_id 或 site_id 请求资源
 - **THEN** 服务 MUST 返回 404 且不泄露该资源是否存在
 
+### Requirement: Non-manager paths require the current coach role
+
+非 Owner/Admin 路径 SHALL 要求调用者当前角色为 coach，且该角色 MUST 在每个请求上重新判定；角色降级后，即使仍保留 SiteMembership、即使 grant 未到期，三项能力全部不成立，授予时的角色检查 MUST NOT 替代请求时的判定。
+
+#### Scenario: Coach baseline before downgrade
+
+- **WHEN** 具该 Site 访问权的 Coach 创建 Session，并读取该 Session 与其下 Asset、修改该 Session
+- **THEN** 服务 MUST 各返回 201 或 200，作为降级前的对照基线
+
+#### Scenario: Downgrade revokes creator rights without touching site membership
+
+- **WHEN** Owner 把该 Coach 降级为 athlete 且刻意保留其 SiteMembership，随后该原创建者读取 Session、读取其中 Asset、提交 PATCH
+- **THEN** 读取与 PATCH MUST 全部返回 404，且数据库中该 Site 的成员关系与资源记录 MUST 保持不变
+
+#### Scenario: Unexpired grant does not survive the downgrade
+
+- **WHEN** 降级为 athlete 的用户持有一项未过期的 Session read grant 或 Asset read grant
+- **THEN** 其读取 MUST 返回 404，grant 记录 MUST 不被自动删除但不再生效
+
 ### Requirement: Session read grant covers current and future assets
 
-一项有效 Session read grant SHALL 覆盖该 Session 当前与之后新增的全部 Asset，包括之后产生的派生 Asset；覆盖 MUST 在每次读取时按父 Session 判定，不得依赖授权时刻已存在的资产清单。
+一项有效 Session read grant SHALL 覆盖该 Session 当前与之后新增的全部 Asset；覆盖 MUST 在每次读取时按父 Session 判定，不得依赖授权时刻已存在的资产清单。该 grant 只授予读取。
 
 #### Scenario: Asset created after the grant
 
-- **WHEN** 已获 Session grant 的 Coach 在该会话下新增上传意向后读取新 Asset
-- **THEN** 服务 MUST 返回 200
+- **WHEN** 会话创建者或本机构管理员在该会话下新建上传意图后，已获 Session grant 的 Coach 读取这个新 Asset
+- **THEN** 服务 MUST 返回 200；该 Coach 自己提交上传意图 MUST 返回 403
 
 #### Scenario: Asset created before the grant
 
 - **WHEN** 会话中先存在 Asset，之后才授予该 Coach Session read grant
 - **THEN** 该 Coach 读取既有 Asset MUST 返回 200
 
-#### Scenario: Derived asset in the same session
+#### Scenario: Grant expiry ends coverage
 
-- **WHEN** 该 Session 之后新增一个派生 Asset 且其父 Asset 同属该会话
-- **THEN** 该 Coach 读取该派生 Asset MUST 返回 200
+- **WHEN** 服务端时间越过该 grant 的 expires_at 后，该 Coach 读取该 Session 或其 Asset
+- **THEN** 服务 MUST 返回 404，且 grant 记录仍保留、不因过期被删除
 
 ### Requirement: Asset read grant is limited to its asset
 

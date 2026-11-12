@@ -39,10 +39,15 @@ Asset 的 tenant_id、site_id、session_id MUST 由已校验的父 Session 决�
 - **WHEN** 请求试图指定 tenant_id、site_id、session_id、origin、created_at 或 received_at
 - **THEN** 服务 MUST 返回 422 且不创建记录
 
-#### Scenario: Derived asset inherits parent
+#### Scenario: No public derived creation path
 
-- **WHEN** 系统记录一个派生 Asset 而其父 Asset 属于另一 Session、另一机构或尚未 ready
-- **THEN** 该记录 MUST 被拒绝，且 MUST NOT 出现跨 Session 或跨机构的派生链
+- **WHEN** 任何调用者尝试在请求中指定 origin=derived 或 derived_from_asset_id，或寻找公开的派生创建操作
+- **THEN** 服务 MUST 返回 422 或不存在该操作，派生资产 MUST NOT 经公开接口产生
+
+#### Scenario: Cross-session derived reference is rejected
+
+- **WHEN** 存储层收到一条 derived 记录，其父 Asset 属于另一 Session 或另一机构
+- **THEN** 数据库 MUST 以复合外键拒绝该写入，MUST NOT 出现跨 Session 或跨机构的派生链
 
 ### Requirement: Capture time keeps raw device values
 
@@ -84,17 +89,17 @@ Asset 的 tenant_id、site_id、session_id MUST 由已校验的父 Session 决�
 
 ### Requirement: Intent creates asset and upload session together
 
-创建上传意图 SHALL 在同一事务内同时写入 VideoAsset(pending_upload) 与 UploadSession(uploading)，并返回两者的初始状态；系统 MUST NOT 提供任何绕过上传意图的裸 Asset 创建路径。
+创建上传意图 SHALL 在单一事务内同时写入 VideoAsset(pending_upload)、UploadSession(uploading) 与对应的幂等记录，一次提交；系统 MUST NOT 把三者拆成多次提交，也 MUST NOT 提供任何绕过上传意图的裸 Asset 创建路径。
 
 #### Scenario: Both records appear or neither
 
 - **WHEN** 上传意图创建成功
-- **THEN** 服务 MUST 返回 201 且同时可读到该 Asset 与该 UploadSession，后者 asset_id 指向前者
+- **THEN** 服务 MUST 返回 201 且同时可读到该 Asset 与该 UploadSession，后者 asset_id 指向前者，重试返回同一对记录
 
 #### Scenario: Failure leaves nothing behind
 
-- **WHEN** 在写入 UploadSession 阶段发生受控失败
-- **THEN** 事务 MUST 整体回滚，既不存在该 Asset 也不存在该 UploadSession
+- **WHEN** 在写入 UploadSession 或幂等记录阶段发生受控失败
+- **THEN** 事务 MUST 整体回滚：既不存在该 Asset、该 UploadSession，也不存在该幂等记录
 
 ### Requirement: Upload session terminal states pair with asset failure
 
@@ -117,7 +122,12 @@ UploadSession 的每个终态 MUST 在同一事务内与该 Asset 的状态配�
 
 ### Requirement: Intent expiry uses the server clock
 
-UploadSession 的 expires_at SHALL 由服务端按签发时刻与既定上限写入，到期判定 MUST 使用服务端 UTC 时间且不因读取、重试或心跳延长；到期后该上传会话 MUST 被终结为 expired、其 Asset MUST 同事务进入 failed。
+UploadSession 的 expires_at SHALL 只由服务端按签发时刻与既定上限（默认 24 小时、最长 7 天）写入，调用方 MUST NOT 指定或延长；到期判定 MUST 使用服务端 UTC 时间且不因读取、重试或心跳延长，到期后该上传会话 MUST 被终结为 expired、其 Asset MUST 同事务进入 failed。
+
+#### Scenario: Client cannot set the deadline
+
+- **WHEN** 上传意图请求携带 expires_at、ttl 或类似字段
+- **THEN** 服务 MUST 返回 422 且不创建记录，响应中的 expires_at 始终由服务端派生
 
 #### Scenario: Expired intent cannot stay pending
 

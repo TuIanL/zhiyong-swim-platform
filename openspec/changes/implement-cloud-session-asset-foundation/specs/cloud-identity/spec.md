@@ -46,7 +46,7 @@
 #### Scenario: Unique keys and cascading removal
 
 - **WHEN** 创建重复邮箱、机构标识、同机构同名场馆、成员或授权，或者删除其父记录
-- **THEN** 重复写入 MUST 被拒绝，允许的父记录删除 MUST 按已声明级联关系删除子记录，不涉及该父记录的其他机构记录 MUST 保留；删除全局账号时，其跨机构成员关系亦按级联删除
+- **THEN** 重复写入 MUST 被拒绝，允许的父记录删除 MUST 按已声明级联关系删除子记录，不涉及该父记录的其他机构记录 MUST 保留；删除全局账号时，其跨机构成员关系亦按级联删除。本 Change 新增的五张表以 RESTRICT 引用父级，其存在会阻止父级删除（见下一场景），因此本场景的级联断言只在没有这些子记录的数据集上成立
 
 #### Scenario: Interrupted migration transaction
 

@@ -28,7 +28,16 @@ main@57e91a5 的真实基线：10 张业务表、21 paths / 31 operations。可�
 
 ## Decisions
 
-以下 D14–D21 为本轮**提案**，不是已批准决策；D11–D13 已由上一切片确认，本 Change 不复用它们的授权。
+D14–D21 是本次提案设计。负责人 2026-11-12 独立审阅通过总体技术路线，并确认 Q10–Q13；D11–D13 为上一切片确认项，本 Change 不复用它们的授权。
+
+### 已确认的负责人决策（2026-11-12）
+
+| 编号 | 原问题 | 确认结论 |
+| --- | --- | --- |
+| Q10 | 受授人角色范围 | 第一版仅 `coach`；`athlete` 不得作为受授人，学员路径留给教练—学员任务 |
+| Q11 | Edge 上传意图归属 | 保留在 M2，同步扩展共享幂等表 |
+| Q12 | 上传意图有效期 | 服务端默认 24 小时、最长 7 天；M2 不接受客户端任意指定 TTL |
+| Q13 | M2 不产生 ready | 接受该内部阶段限制；整对象校验与 ready 转换由 M3 负责 |
 
 ### D14 M2/M3 切分：以「能否产生 ready」为分界线
 
@@ -36,7 +45,7 @@ main@57e91a5 的真实基线：10 张业务表、21 paths / 31 operations。可�
 
 - M2（本 Change）交付：Session 全生命周期、Asset 逻辑身份与来源、上传意图的原子创建、上传意图的终态配对（aborted / expired / session_cancelled）、懒物化过期、S-read/S-manage/A-read 与全部读取路径、过滤式游标分页。
 - M3 接手：part URL 与分片回执、断点续传查询、`complete` 与整对象 bytes / SHA-256 / 媒体元数据校验、`completed → ready` 原子配对、播放 URL 签发、可重试的过期清扫作业、孤儿对象清理、cancel-vs-complete 竞态。
-- **M2 内不存在任何能把 Asset 置为 `ready` 的路径**。因此 M2 的验收不得包含播放、下载、checksum 非空或 ready 资产；M2 创建的资产在 abort/过期/Session 取消后进入 `failed`，不会永久悬空。
+- **M2 内不存在任何能把 Asset 置为 `ready` 的路径**。因此 M2 的验收不得包含播放、下载、checksum 非空或 ready 资产。M2 内的资产**可以合法停留在 `pending_upload`**（这是未完成上传的正常状态，不是缺陷）；经中止、Session 取消或到期物化后才进入 `failed`，遗留的过期记录由 M3 的可重试清扫作业收口。
 
 替代方案与否决理由：
 
@@ -76,11 +85,13 @@ main@57e91a5 的真实基线：10 张业务表、21 paths / 31 operations。可�
 
 | 能力 | 判定 |
 | --- | --- |
-| S-read | `role ∈ {owner, admin}`；或 `member ∧ site_membership(u, site) ∧ (session.created_by_user_id = u ∨ ∃ active session_read_grant(session, u))` |
-| S-manage | `role ∈ {owner, admin}`；或 `session.created_by_user_id = u ∧ member ∧ site_membership(u, site)` |
-| A-read | `role ∈ {owner, admin}`；或 `member ∧ site_membership(u, site) ∧ (asset.created_by_user_id = u ∨ ∃ active asset_read_grant(asset, u) ∨ S-read(asset.session_id, u))` |
+| S-read | `role ∈ {owner, admin}`；或 `role = coach ∧ member ∧ site_membership(u, site) ∧ (session.created_by_user_id = u ∨ ∃ active session_read_grant(session, u))` |
+| S-manage | `role ∈ {owner, admin}`；或 `session.created_by_user_id = u ∧ role = coach ∧ member ∧ site_membership(u, site)` |
+| A-read | `role ∈ {owner, admin}`；或 `role = coach ∧ member ∧ site_membership(u, site) ∧ (asset.created_by_user_id = u ∨ ∃ active asset_read_grant(asset, u) ∨ S-read(asset.session_id, u))` |
 
 `active grant` = `revoked_at IS NULL ∧ (expires_at IS NULL ∨ expires_at > now)`。三项能力必须由**同一个谓词构造器**产出，列表、详情、子列表、游标续页共用，禁止各处手写不同条件。
+
+**非 Owner/Admin 路径的当前角色必须是 `coach`（P1-1）**：`role` 取自每个请求当下的 `tenant_memberships`，不使用登录快照、不使用 grant 记录里保存的角色。角色降级为 `athlete` 后，即使仍保留该 Site 的 `site_memberships`、即使持有一项未过期的 grant，S-read / S-manage / A-read 全部为假，读取返回 404、管理返回 404（资源对他已不可见）。授予 grant 时校验受授人角色是**附加前置**，不能替代每次请求的角色判定；反过来也不因为授予时是 coach 就永久放行。
 
 Owner/Admin 不依赖 `site_memberships`；其范围是「当前 tenant 内全部 site」，且不跨机构。Coach 的 Site 访问只是前置条件，永远不能替代资源级判定。
 
@@ -105,16 +116,18 @@ Owner/Admin 不依赖 `site_memberships`；其范围是「当前 tenant 内全�
 - 取消 Session：先锁会话行，再 `UPDATE upload_sessions SET status='failed', failure_reason='session_cancelled' WHERE session_id=? AND status IN ('uploading','completing')`，再 `UPDATE video_assets SET status='failed', failure_reason='session_cancelled' WHERE session_id=? AND status='pending_upload'`，最后写会话 cancelled。任一语句失败则整体回滚，不允许出现「会话已取消但资产仍 pending_upload」。
 - 因为每个 pending 资产恰有一条上传会话（`upload_sessions.asset_id` 唯一），两条 UPDATE 覆盖的是同一批业务对象；取消场景下原因统一为 `session_cancelled`，不会出现两侧原因不一致。
 - 取消与中止并发：两者都对同一行做条件更新，只有一个事务的行数不为 0；落败方重新读取并返回已提交终态。取消先赢则该上传会话原因为 `session_cancelled`，中止先赢则原因为 `upload_aborted`，后到的取消不再改写原因。
-- 取消后新建上传意图返回 409 `state_conflict`。completed 会话可以继续接收上传意图（契约允许合规补传），但 status 不回退。
+- **取消后新建上传意图返回 409 `state_conflict`**（cancelled 是终态，禁止再产生媒体记录）。
+- **completed Session 允许补传**：符合权限、来源与其余业务约束的上传意图照常创建（201），Session 状态保持 completed、`completed_at` 不被重写。这与[已批准媒体契约](../../../docs/contracts/cloud-capture-media.md) §5「completed Session 可以接收规则允许的补传但不能回退状态」一致，本片不新增限制。
+- 补传仍要求 S-manage（用户路径）或有效节点凭据与 active device（Edge 路径），并受 D21 采集时间校验约束；补传产生的资产与普通意图一样处于 `pending_upload`，M2 内不产生 ready。
 
 ### D19 上传意图：原子创建、失败原因词表、懒物化过期
 
-创建路径只有两条：用户路径（`S-manage`，发起人=当前用户）与 Edge 路径（节点凭据、Session 同 tenant/site、device 属该节点且 active）。两者都在一个事务内 `INSERT video_assets` + `INSERT upload_sessions`，任何一侧失败则回滚。
+创建路径只有两条：用户路径（`S-manage`，发起人=当前用户）与 Edge 路径（节点凭据、Session 同 tenant/site、device 属该节点且 active）。两者都在**单一事务里 `INSERT video_assets` + `INSERT upload_sessions` + `INSERT idempotency_records`，一次 `commit`**：不允许把三个写入拆成多次独立提交，也不允许沿用「先提交资源、再补幂等记录」的写法。任一步失败则整体回滚，业务侧看到的是「三者都不存在」。
 
 - `upload_sessions.asset_id` 唯一，保证「一个逻辑资产恰有零或一条上传意图」。
 - 失败原因使用**一次定义、封闭**的词表：`upload_aborted`、`upload_expired`、`session_cancelled`、`upload_failed`、`validation_failed`。M2 只能产生前三个（`upload_failed` 保留给 M3 的分片/传输失败，`validation_failed` 保留给整对象校验失败），并在 CHECK 中一次性写入，避免 M3 再改约束。
-- `expires_at` 由服务端按 `created_at + 默认 24 小时` 写入，上限 7 天；判定只用服务端时钟，读取、重试、心跳都不延长。
-- 过期**懒物化**：只有对该上传会话的读取或中止请求会把 `uploading` 且已过期的记录原子终结为 `expired` + 资产 `failed(upload_expired)`。M2 不引入后台作业；因此会话列表/资产列表可能短暂显示已过期但未物化的 `pending_upload`，这是本切片的已知限制，由 M3 的可重试清扫作业收口。M2 的验收必须按单资源读取断言过期语义，不能把列表瞬时状态当作缺陷或当作已实现清扫。
+- `expires_at` 由服务端按 `created_at + 默认 24 小时` 写入，上限 7 天；**请求模型不提供 TTL 字段**，客户端无法指定或延长，未知字段一律 422。判定只用服务端时钟，读取、重试、心跳都不延长。默认值与上限是服务端配置常量，调整参数不需要改表结构。
+- 过期**懒物化**：只有对该上传会话的读取或中止请求会把 `uploading` 且已过期的记录原子终结为 `expired` + 资产 `failed(upload_expired)`。M2 不引入后台作业；因此该资产可以合法停留在 `pending_upload` 直到被物化，列表也可能短暂显示已过期但未物化的记录。这是本切片的已知限制，遗留过期记录由 M3 的可重试清扫作业收口；M2 的验收按单资源读取断言过期语义，不把列表瞬时状态当作缺陷，也不声称已实现清扫。
 
 ### D20 幂等记录按主体扩展（迁移风险最高的一项）
 
@@ -129,13 +142,33 @@ Owner/Admin 不依赖 `site_memberships`；其范围是「当前 tenant 内全�
 | 词表扩展 | `operation` 增加 `training_session.create`、`upload_intent.create`；`resource_kind` 增加 `training_session`、`upload_session` |
 | 唯一性 | 删除原唯一约束，改为两条部分唯一索引：用户域 `(tenant_id, site_id, user_id, operation, target_id, key_hash) WHERE actor_kind='user'`，节点域同形但以 `edge_node_id` 代替 `user_id` |
 
-选择扩展而非新建第二张表：两套幂等机制会产生两套保留/重试语义，且 Edge 与用户在同一次「上传意图」上必然并存。代价是触及既有表，因此：
+选择扩展而非新建第二张表：两套幂等机制会产生两套保留/重试语义，且 Edge 与用户在同一次「上传意图」上必然并存。Q11 已确认保留 Edge 意图，因此不再保留「整体推迟到 M3」的替代方案。代价是触及既有表，因此（P1-4）：
 
-- SQLite 需 `batch_alter_table` 重建该表，PostgreSQL 需 drop/add 约束与索引；两后端都要有「升级 → 降级到 0002 → 再升级」的往返用例。
+**无损迁移（升级）**
+
+- `actor_kind` 以 `NOT NULL DEFAULT 'user'` 一次性完成既有行回填，不依赖额外的逐行脚本；
+- 既有 `key_hash`、`request_hash`、`operation`、`target_id`、`resource_kind`/`resource_id` 原样保留，不重新哈希、不重算摘要、不改写资源引用；
+- 原唯一约束 `uq_idempotency_scope_key` 在回填后替换为 `uq_idempotency_user_scope_key`（`(tenant_id, site_id, user_id, operation, target_id, key_hash) WHERE actor_kind='user'`），列组合与原来一致，因此既有键的唯一性语义不变；
+- 迁移前后断言「原记录数 = `actor_kind='user'` 记录数」，并在含历史幂等数据的库上重跑 12 个 Registry 幂等用例，结果与迁移前逐项一致。
+
+**降级策略（不允许静默丢数据）**
+
+- 降级到 0002 前 MUST 检查是否存在 `actor_kind='edge_node'`，或 `operation ∈ {training_session.create, upload_intent.create}`，或 `resource_kind ∈ {training_session, upload_session}` 的记录；
+- 存在任一上述记录时，降级 MUST 失败并给出带计数与分类的显式错误，由操作者先导出或处置后重试；MUST NOT 自动截断、忽略或改写这些行；
+- 只有全部为纯 User 主体且 `operation`/`resource_kind` 都属于旧词表时才允许降级；
+- 允许降级时，`user_id` 恢复非空、旧唯一约束恢复，已回填的 `actor_kind` 列随表重建移除。
+
+**单事务边界**
+
+- 既有 `commit_idempotently` 是「写资源 → flush → 写幂等记录 → 一次 commit」，其前提是只有一类业务对象；上传意图必须在同一事务内写 **Asset + UploadSession + 幂等记录** 三个对象后单次 `commit`，MUST NOT 拆成三次独立提交，也 MUST NOT「资源先提交、幂等记录后补」。
+- 反向亦然：幂等记录写入失败必须让 Asset 与 UploadSession 一起回滚；命中既有幂等记录时不得再插入任何业务行。
+
+**两后端与回滚验收**
+
+- SQLite 需 `batch_alter_table` 重建该表（约束与索引一并重建），PostgreSQL 需 drop/add 约束与索引；两后端都要有「升级 → 降级到 0002 → 再升级」的往返用例，且往返后行数、键摘要与资源引用不变。
+- 受控回滚：在 `actor_kind` 回填之后、唯一索引替换之前注入失败，验证整表重建回滚、版本标记不推进、旧约束仍生效。
 - 既有 12 个 Registry 操作的幂等测试断言**不得修改**，必须原样通过；这是本片最高优先级的回归门槛。
 - 用户域与节点域的键不得互相碰撞（同一字符串在两域可各自成立），由部分索引的作用域保证。
-
-替代：若负责人不接受改动共享表，则 Edge 上传意图整体推迟到 M3，M2 只保留用户路径；代价是 M2 无法验收设备来源，且 M3 要同时引入来源模型与传输模型。见待裁决 Q11。
 
 ### D21 采集时间与声明值的信任边界
 
@@ -259,7 +292,7 @@ P = `/api/v1/tenants/{tenant_id}/sites/{site_id}`。共 12 paths / 16 operations
 | 8 | DELETE | P/training-sessions/{session_id}/read-grants/{user_id} | Owner/Admin | — | 204 |
 | 9 | PUT | P/video-assets/{asset_id}/read-grants/{user_id} | Owner/Admin | GrantPut | 204 |
 | 10 | DELETE | P/video-assets/{asset_id}/read-grants/{user_id} | Owner/Admin | — | 204 |
-| 11 | POST | P/training-sessions/{session_id}/upload-sessions | S-manage，发起人=自己 | UploadIntentCreate + `Idempotency-Key` | 201 UploadIntentRead |
+| 11 | POST | P/training-sessions/{session_id}/upload-sessions | S-manage，发起人=自己；Session 为 cancelled 时 409，completed 时允许补传 | UploadIntentCreate + `Idempotency-Key` | 201 UploadIntentRead |
 | 12 | GET | P/upload-sessions/{upload_session_id} | 原发起用户且仍具 S-manage | — | 200 UploadSessionRead |
 | 13 | POST | P/upload-sessions/{upload_session_id}/abort | 原发起用户且仍具 S-manage | — | 204 |
 | 14 | POST | `/api/v1/edge/sessions/{session_id}/upload-sessions` | 有效节点凭据；Session 同 tenant/site；device 属该节点且 active | EdgeUploadIntentCreate + `Idempotency-Key` | 201 UploadIntentRead |
@@ -276,8 +309,8 @@ P = `/api/v1/tenants/{tenant_id}/sites/{site_id}`。共 12 paths / 16 operations
 | SessionPatch | `title?`、`status?`；至少一个非空字段，空 PATCH/含 null 为 422；不接受归属、创建者、历史时间 |
 | GrantPut | `expires_at?`（必须带时区且严格晚于当前时刻）；受授人由路径决定 |
 | CaptureMetadata | `device_capture_started_at_raw?`、`device_capture_ended_at_raw?`（各 ≤64，字面值）、`device_time_basis`、`device_timezone?`、`device_utc_offset_minutes?`、`video_timebase_kind`、`video_timebase_metadata?`（JSON 对象，序列化 ≤8 KiB）、`device_clock_source`、`device_clock_offset_ms?`、`device_clock_accuracy_ms?`；按 D21 表做交叉校验 |
-| UploadIntentCreate | `expected_size_bytes`、`expected_sha256`、`media_type?`、`capture_metadata` |
-| EdgeUploadIntentCreate | `device_id`、`expected_size_bytes`、`expected_sha256`、`media_type?`、`capture_metadata`；来源由凭据解析，不接受自报节点或场馆 |
+| UploadIntentCreate | `expected_size_bytes`、`expected_sha256`、`media_type?`、`capture_metadata`；**无 `expires_at` 字段**，TTL 由服务端常量决定，未知字段 422 |
+| EdgeUploadIntentCreate | `device_id`、`expected_size_bytes`、`expected_sha256`、`media_type?`、`capture_metadata`；来源由凭据解析，不接受自报节点、场馆或 TTL |
 | SessionRead | id、tenant_id、site_id、created_by_user_id、title、status、started_at、completed_at、cancelled_at、created_at、updated_at |
 | AssetRead | id、tenant_id、site_id、session_id、origin、created_by_user_id、source_edge_node_id、source_device_id、derived_from_asset_id、status、failure_reason、capture_*（与请求同名同值）、video_*、device_clock_*、received_at、media_type、size_bytes、checksum_sha256、created_at、updated_at |
 | UploadSessionRead | id、asset_id、status、initiator（用户或节点二选一）、expected_size_bytes、expected_sha256、media_type、expires_at、confirmed_parts（本切片恒为空数组）、completed_at、failure_reason、created_at、updated_at |
@@ -333,13 +366,13 @@ Asset API 不暴露 `storage_object_ref`（本切片无该列），不暴露对�
 | 契约列出 21 个 Session/Asset/Upload 操作 | 本片实现其中 16 个；part-urls、complete、playback-url 留给 M3（5 个） |
 | 契约的 `UploadSessionRead.confirmed_parts[]` | 本片恒为空数组，因为尚无分片回执；字段保留以免 M3 改响应形状 |
 | 契约的播放 TTL ≤ 5 分钟 | 本片不实现播放，只在文档中保留该上限待 M3 使用 |
-| 领域草案的「父 Asset 必须 ready 才能派生」 | 本片无派生创建入口，库层只保证同租户/场馆/会话与自引用禁止；ready 前置条件在引入派生路径的 Change 中校验 |
+| 领域草案的「父 Asset 必须 ready 才能派生」 | 本片没有公开的派生创建接口，也没有 ready 资产，因此**不实现、也不声称可独立验收**该前置校验；只承诺可执行的来源列配对、复合外键（同租户/场馆/会话）与自引用禁止。派生创建与 ready 父级验证留给正式引入派生生产接口的 Change |
 | 领域草案的 `storage_object_ref` | 本片不设该列；存储引用属 M3 |
 
 ## Risks / Trade-offs
 
 1. **改动共享幂等表** 是本片最高风险项：SQLite 需重建表，PG 需替换约束。缓解：两后端往返迁移用例 + 12 个 Registry 幂等回归原样通过 + 失败路径显式回滚验证。
-2. **M2 内资产必然走向 failed**：这是切片限制而非产品行为。缓解：文档与验收明确禁止把 pending/ready 混用，M2 不面向真实用户。
+2. **M2 内资产可能合法停留在 `pending_upload`，且不存在 ready**：这是内部阶段限制而非产品行为。缓解：验收禁止把 pending 当作 ready；经中止、取消或到期物化后进入 failed；M2 不面向真实用户。
 3. **懒物化过期** 会让列表短暂显示过期未终结记录。缓解：单资源读取的语义严格断言；M3 清扫作业是已知后续项，不在 M2 声称已实现。
 4. **授权谓词三处复用**（列表、详情、子列表）容易漂移。缓解：单一谓词构造器 + 授权矩阵逐格测试（含跨机构、跨场馆、撤权、降级、成员移除）。
 5. **部分唯一索引两后端差异**：必须以真实写入冲突验证，而不是只读 DDL。
@@ -366,19 +399,20 @@ Asset API 不暴露 `storage_object_ref`（本切片无该列），不暴露对�
 | [P1 实现云端视频分片上传与完整性校验](https://app.notion.com/p/410f602574aa8129ab07d088ad80aa5b) | 仅提供前置契约（UploadSession 状态机、失败词表、过期语义、幂等作用域） | 设计边界 | 本片不实现分片/校验；不得把该任务标为已实施 |
 | [P1 建设教练-学员授权关系与学员档案](https://app.notion.com/p/410f602574aa810eb1f2e547f585ffcc) | 明确排除：不实现学员档案、班组、监护人与教练—学员关系 | 无 | athlete 读取在本片一律不生效；关系授权留给该任务自己的 Change |
 
-## 待负责人裁决
+## 审阅修订记录（2026-11-12）
 
-| 编号 | 事项 | 建议默认 | 若改变的影响 |
-| --- | --- | --- | --- |
-| Q10 | 受授人角色范围 | 仅 `coach`（契约原文）；`athlete` 在学员路径 Change 落地前不可作为受授人 | 放开 athlete 会提前耦合教练—学员任务 |
-| Q11 | Edge 上传意图是否留在 M2（含 D20 的共享表扩展） | 留在 M2 | 移除则 M2 无设备来源创建路径，来源只能做 schema 级验收，M3 需同时引入来源与传输 |
-| Q12 | 上传意图有效期参数 | 默认 24 小时、上限 7 天 | 参数化常量，不影响结构；变更只需改配置与测试 |
-| Q13 | 接受「M2 内不存在 ready」的切片限制 | 接受 | 若要求 M2 即产出 ready，本 Change 必须并入 M3 的存储与校验，范围翻倍 |
+| 编号 | 审阅意见 | 本稿落点 |
+| --- | --- | --- |
+| P1-1 | 非管理路径必须校验当前角色为 coach，不得只在授予时检查 | D16 能力表加入 `role = coach`，并新增「当前角色必须是 coach」段落；`cloud-media-authorization` 新增该要求与降级验收场景 |
+| P1-2 | 统一 completed 补传与 cancelled 禁止新建意图 | D18 拆为 cancelled / completed / 补传约束三条；`cloud-training-session` 对应场景拆分并新增补传场景 |
+| P1-3 | 只读 grant 不授予上传；派生不得声称 M2 可独立验收 | 重写「新增资产由他人创建后受授人读取」场景；派生场景改为「无公开派生入口 + 结构外键」；删除不可达的派生读取场景；偏差表与 Known Limitations 明确 ready 父级延后 |
+| P1-4 | 幂等迁移与降级策略 | D20 新增「无损迁移 / 降级策略 / 单事务边界 / 两后端与回滚验收」四组要求；tasks 1.2 扩容 |
+| Q10–Q13 | 四项参数确认 | 顶部「已确认的负责人决策」表；proposal、spec delta 与 tasks 同步去除待裁决表述 |
 
 ## Future Considerations / Known Limitations
 
 - M3 必须补：part URL 与分片回执表、`complete` 的 202/200 语义与幂等、整对象校验、`completed → ready`、播放 URL（TTL ≤ 5 分钟）、cancel-vs-complete 竞态、可重试过期清扫、孤儿对象清理。
 - MediaBlob 是否独立建表、物理内容复用与引用回收仍待存储决策；本片不建表、不引入引用计数。
-- 派生资产的创建路径、`ready` 父前置与跨 Session 共享禁止需在引入派生/转码的 Change 中单独评审。
+- 派生资产：本片没有公开创建接口，也没有 ready 资产，因此不实现「父 Asset 必须 ready」的校验，也不把它当作可独立验收的行为；只承诺来源列配对、同租户/场馆/会话的复合外键与自引用禁止。派生创建路径与 ready 父级验证留给正式引入派生生产接口的 Change。
 - 学员端读取、教练—学员关系与监护人同意由 [P1 教练-学员任务](https://app.notion.com/p/410f602574aa810eb1f2e547f585ffcc) 自己的 Change 承接，本片不提供预留字段。
 - Pool/Lane、保留与处置策略、审计事件系统、RLS 与生产部署均不在本片；本片不声称任何一项已具备。

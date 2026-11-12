@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义训练业务记录（TrainingSession）的建立、归属不可变、可观察状态机与取消语义，使云端成为训练会话的最终业务权威，并为多机位录像、资源级授权和后续上传提供稳定父记录。
+定义训练业务记录（TrainingSession）的建立、归属不可变、可观察状态机、取消语义与完成后的补传规则，使云端成为训练会话的最终业务权威，并为多机位录像、资源级授权和后续上传提供稳定父记录。
 
 ## ADDED Requirements
 
@@ -72,7 +72,21 @@ Session 的可写集合 SHALL 仅为 title 与 status；空 PATCH 或仅含 null
 - **WHEN** 调用者再次取消同一已 cancelled 会话
 - **THEN** 服务 MUST 返回 200，且不得回退状态、不得重复改写已终结上传的原因或时间
 
-#### Scenario: Upload intent after cancellation
+#### Scenario: Upload intent rejected after cancellation
 
-- **WHEN** 调用者在已 cancelled 或已 completed 的会话上请求创建上传意图
+- **WHEN** 调用者在已 cancelled 的会话上请求创建上传意图
 - **THEN** 服务 MUST 返回 409 `state_conflict` 且不创建 Asset 或 UploadSession
+
+### Requirement: Completed sessions accept make-up uploads
+
+已 completed 的 Session SHALL 继续接受符合权限、来源与采集时间约束的补传上传意图，补传 MUST NOT 回退 Session 状态或重写 completed_at；补传产生的资产与普通意图一样处于 pending_upload。
+
+#### Scenario: Make-up upload after completion
+
+- **WHEN** 具 S-manage 的调用者在 completed 会话上以合规来源与采集元数据创建上传意图
+- **THEN** 服务 MUST 返回 201，Session 状态仍为 completed、completed_at 不变，新 Asset 为 pending_upload
+
+#### Scenario: Make-up upload still needs permission and valid source
+
+- **WHEN** 无 S-manage 的用户请求补传，或 Edge 路径使用已 disabled 的设备
+- **THEN** 前者 MUST 返回 403 或 404，后者 MUST 返回 409，且均不创建记录
