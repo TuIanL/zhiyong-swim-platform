@@ -46,7 +46,8 @@
 | 环境 | 结果 |
 | --- | --- |
 | 本机 SQLite（242 tests） | **0 failures / 0 errors / 64 skipped**（skip 全为 `postgresql` 标记） |
-| CI PostgreSQL 17 | 见第 6 节 |
+| CI（push）[43411561625](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43411561625) | `test` 与 `PostgreSQL 17 validation` 均 **success** |
+| CI（pull_request）[43411568554](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43411568554) | 两个 job 均 **success** |
 
 本机无 Docker daemon，PostgreSQL 用例只在 CI 执行；受控顺序与 PID 证据均由 CI 承载。
 
@@ -56,6 +57,19 @@
 - 既有 12 个 Registry 幂等测试与 19 个基础操作断言未修改。
 - 锁粒度仍为单行 Session，不引入表锁或进程内互斥；跨机构请求在 scope 谓词上被过滤，不产生跨租户锁竞争。
 
-## 6. 待回填
+## 6. 修复 head 与 CI 证据
 
-- 修复 head 与最终 CI 证据（本记录随后续提交补全）。
+- 修复 head：`8e5e50b5b81cb314fdbe18554be844e128bf7884`（分支 `feat/cloud-session-asset-foundation`）
+- 提交链：`70e7610` 产品修复与新增测试 → `8e5e50b` 并发用例识别方式修正
+- push run [43411561625](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43411561625)：`test` 与 `PostgreSQL 17 validation` 均 success
+- pull_request run [43411568554](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43411568554)：两个 job 均 success
+- PG 作业内实际执行了受控顺序用例（创建先赢 / 取消先赢 / 过期先赢 / 中止先赢）与 PID 断言，非仅线程并发
+
+### CI 过程中修正的测试实现问题
+
+首轮 CI 报「第一条请求没有取得行锁」。原因是 TestClient 把同步端点派发到 AnyIO worker 线程，`threading.local()` 在调用线程设置的标记在请求线程不可见，事件钩子无法区分请求。改为按「第几次取得同一行锁」判定先后（第一条已持锁暂停时，再发同一锁语句的必然是第二条），并把 PID 采集改为集合。该问题只影响测试识别方式，不影响产品并发协议。
+
+## 7. 本轮未覆盖
+
+- 未执行独立 Verify、Archive、主规格同步、Ready for review、Merge。
+- 原 Apply 报告与 28/28 任务历史未修改；本文件只追加初审修复记录。
