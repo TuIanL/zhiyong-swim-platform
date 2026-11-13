@@ -1,5 +1,6 @@
 """PostgreSQL 专属：真实并发、降级守卫与受限外键（需专用可销毁实例）。"""
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -380,19 +381,25 @@ UPLOAD_LOCK = lambda statement: "from upload_sessions" in statement and "for upd
 
 
 class ControlledRace:
-    """让第一条请求持锁暂停、第二条请求真实阻塞在同一行锁上，再放行。
+    """由独立 PostgreSQL 监控连接确认行锁等待后，再放行受控请求。
 
     顺序按「第几次取得该行锁」判定，不依赖线程身份：TestClient 会把同步端点
     派发到 AnyIO worker 线程，threading.local 在调用线程设置后并不可见。
+    监控连接会检查第二个 backend 的 wait_event_type 与 pg_blocking_pids，
+    因而 SQLAlchemy 语句入口事件本身不被当作实际阻塞证据。
     """
 
-    def __init__(self, app, predicate):
+    def __init__(self, app, predicate, pg_environment, database_name):
         self.app = app
         self.predicate = predicate
+        self.pg_environment = pg_environment
+        self.database_name = database_name
         self.first_locked = threading.Event()
-        self.second_blocked = threading.Event()
+        self.second_query_entered = threading.Event()
         self.release = threading.Event()
         self.pids = {}
+        self.lock_wait = None
+        self.monitor_pid = None
         self._locks = 0
         engine = app.state.engine
         event.listen(engine, "before_cursor_execute", self._before)
@@ -411,10 +418,11 @@ class ControlledRace:
         return connection.connection.driver_connection.info.backend_pid
 
     def _before(self, connection, cursor, statement, parameters, context, executemany):
-        # 第一条请求已持锁暂停时，此刻再发起同一锁语句的只能是第二条。
+        # 第一条请求已持锁暂停时，第二条请求到达同一锁 SQL 的执行入口。
+        # 是否已进入 PostgreSQL 锁等待由独立监控连接另外确认。
         if self._matches(statement) and self._locks == 1:
             self.pids["second"] = self._pid(connection)
-            self.second_blocked.set()
+            self.second_query_entered.set()
 
     def _after(self, connection, cursor, statement, parameters, context, executemany):
         if not self._matches(statement):
@@ -430,8 +438,41 @@ class ControlledRace:
         with TestClient(self.app) as client:
             return job(client)
 
+    def observe_database_lock_wait(self, timeout_seconds=10):
+        """用独立管理员连接观察 second backend 被 first backend 的行锁阻塞。"""
+        deadline = time.monotonic() + timeout_seconds
+        last_observation = None
+        with self.pg_environment.admin(self.database_name) as monitor:
+            monitor.execute("SET statement_timeout = 1000")
+            self.monitor_pid = monitor.execute("SELECT pg_backend_pid()").fetchone()[0]
+            while time.monotonic() < deadline:
+                row = monitor.execute(
+                    "SELECT activity.wait_event_type, activity.wait_event, "
+                    "pg_blocking_pids(activity.pid), pg_backend_pid() "
+                    "FROM pg_stat_activity AS activity "
+                    "WHERE activity.pid = %s AND activity.datname = current_database()",
+                    (self.pids["second"],),
+                ).fetchone()
+                if row:
+                    wait_type, wait_event, blocking_pids, monitor_pid = row
+                    self.monitor_pid = monitor_pid
+                    last_observation = (wait_type, wait_event, blocking_pids)
+                    if wait_type == "Lock" and self.pids["first"] in blocking_pids:
+                        self.lock_wait = {
+                            "wait_event_type": wait_type,
+                            "wait_event": wait_event,
+                            "blocking_pids": tuple(blocking_pids),
+                        }
+                        return
+                time.sleep(0.05)
+        raise AssertionError(
+            "未在有界等待内观察到第二个 backend 被第一个 backend 持有的锁阻塞；"
+            f"first={self.pids.get('first')}, second={self.pids.get('second')}, "
+            f"monitor={self.monitor_pid}, last={last_observation}"
+        )
 
-def run_ordered(race, first_job, second_job):
+
+def run_ordered(race, first_job, second_job, record_property):
     results = {}
 
     def first():
@@ -445,11 +486,25 @@ def run_ordered(race, first_job, second_job):
     assert race.first_locked.wait(20), "第一条请求没有取得行锁"
     blocked = threading.Thread(target=second, daemon=True)
     blocked.start()
-    assert race.second_blocked.wait(20), "第二条请求没有到达同一把行锁"
-    race.release.set()
-    holder.join(20)
-    blocked.join(20)
+    try:
+        assert race.second_query_entered.wait(20), "第二条请求没有到达同一锁 SQL 执行入口"
+        race.observe_database_lock_wait(timeout_seconds=10)
+    finally:
+        race.release.set()
+        holder.join(20)
+        blocked.join(20)
     assert set(results) == {"first", "second"}
+    assert race.pids["first"] != race.pids["second"]
+    assert race.monitor_pid not in {race.pids["first"], race.pids["second"]}
+    record_property("first_lock_holder_backend_pid", str(race.pids["first"]))
+    record_property("second_waiting_backend_pid", str(race.pids["second"]))
+    record_property("lock_monitor_backend_pid", str(race.monitor_pid))
+    record_property("second_wait_event_type", race.lock_wait["wait_event_type"])
+    record_property("second_wait_event", race.lock_wait["wait_event"] or "")
+    record_property(
+        "second_blocking_backend_pids",
+        ",".join(str(pid) for pid in race.lock_wait["blocking_pids"]),
+    )
     return results
 
 
@@ -462,10 +517,10 @@ def counts(app):
         )
 
 
-def test_intent_first_then_cancel_terminates_upload(pg_databases, seeded_account):
+def test_intent_first_then_cancel_terminates_upload(pg_databases, seeded_account, pg_environment, record_property):
     database = pg_databases()
     application, engine = _pooled_app(database)
-    race = ControlledRace(application, SESSION_LOCK)
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
     try:
         with TestClient(application) as client:
             org = seed_scope(client, lambda name: seeded_account(name, application=application))
@@ -483,7 +538,7 @@ def test_intent_first_then_cancel_terminates_upload(pg_databases, seeded_account
                 base + f"/training-sessions/{sid}", headers=headers, json={"status": "cancelled"}
             )
 
-        results = run_ordered(race, create, cancel)
+        results = run_ordered(race, create, cancel, record_property)
         assert results["first"].status_code == 201, results["first"].text
         assert results["second"].status_code == 200, results["second"].text
         assert race.pids["first"] != race.pids["second"]
@@ -507,10 +562,10 @@ def test_intent_first_then_cancel_terminates_upload(pg_databases, seeded_account
         engine.dispose()
 
 
-def test_cancel_first_rejects_intent_without_side_effects(pg_databases, seeded_account):
+def test_cancel_first_rejects_intent_without_side_effects(pg_databases, seeded_account, pg_environment, record_property):
     database = pg_databases()
     application, engine = _pooled_app(database)
-    race = ControlledRace(application, SESSION_LOCK)
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
     try:
         with TestClient(application) as client:
             org = seed_scope(client, lambda name: seeded_account(name, application=application))
@@ -528,7 +583,7 @@ def test_cancel_first_rejects_intent_without_side_effects(pg_databases, seeded_a
                 headers={**headers, "Idempotency-Key": "race-cancel-first"}, json=intent_payload(),
             )
 
-        results = run_ordered(race, cancel, create)
+        results = run_ordered(race, cancel, create, record_property)
         assert results["first"].status_code == 200, results["first"].text
         assert results["second"].status_code == 409, results["second"].text
         assert results["second"].json()["detail"]["code"] == "state_conflict"
@@ -539,10 +594,12 @@ def test_cancel_first_rejects_intent_without_side_effects(pg_databases, seeded_a
         engine.dispose()
 
 
-def test_expiry_first_blocks_abort_from_rewriting_reason(pg_databases, seeded_account):
+def test_expiry_first_blocks_abort_from_rewriting_reason(
+    pg_databases, seeded_account, pg_environment, record_property
+):
     database = pg_databases()
     application, engine = _pooled_app(database)
-    race = ControlledRace(application, UPLOAD_LOCK)
+    race = ControlledRace(application, UPLOAD_LOCK, pg_environment, database.name)
     try:
         with TestClient(application) as client:
             org = seed_scope(client, lambda name: seeded_account(name, application=application))
@@ -561,7 +618,7 @@ def test_expiry_first_blocks_abort_from_rewriting_reason(pg_databases, seeded_ac
         def abort(client):
             return client.post(base + f"/upload-sessions/{upload_id}/abort", headers=headers)
 
-        results = run_ordered(race, read_expired, abort)
+        results = run_ordered(race, read_expired, abort, record_property)
         assert results["first"].json()["status"] == "expired"
         assert results["second"].status_code == 204
         assert race.pids["first"] != race.pids["second"]
@@ -581,10 +638,9 @@ def test_expiry_first_blocks_abort_from_rewriting_reason(pg_databases, seeded_ac
         engine.dispose()
 
 
-def test_abort_first_then_read_keeps_aborted_terminal(pg_databases, seeded_account):
+def test_abort_before_expiry_remains_terminal_after_clock_advance(pg_databases, seeded_account):
     database = pg_databases()
     application, engine = _pooled_app(database)
-    race = ControlledRace(application, UPLOAD_LOCK)
     try:
         with TestClient(application) as client:
             org = seed_scope(client, lambda name: seeded_account(name, application=application))
@@ -594,28 +650,43 @@ def test_abort_first_then_read_keeps_aborted_terminal(pg_databases, seeded_accou
                 headers={**org["ch"], "Idempotency-Key": "expiry-race-2"}, json=intent_payload(),
             ).json()
             base, headers = org["base"], org["ch"]
-            upload_id, asset_id = intent["upload_session"]["id"], intent["asset"]["id"]
-            application.state.clock = lambda: datetime.now(UTC) + timedelta(hours=25)
+            upload_id = intent["upload_session"]["id"]
+            expires_at = datetime.fromisoformat(intent["upload_session"]["expires_at"].replace("Z", "+00:00"))
+            application.state.clock = lambda: expires_at - timedelta(seconds=1)
+            abort_response = client.post(base + f"/upload-sessions/{upload_id}/abort", headers=headers)
 
-        def abort(client):
-            return client.post(base + f"/upload-sessions/{upload_id}/abort", headers=headers)
-
-        def read_after(client):
-            return client.get(base + f"/upload-sessions/{upload_id}", headers=headers)
-
-        results = run_ordered(race, abort, read_after)
-        assert results["first"].status_code == 204
-        assert results["second"].json()["status"] == "expired"
-        assert race.pids["first"] != race.pids["second"]
+        assert abort_response.status_code == 204
 
         with application.state.sessions() as db:
-            # abort 先拿到锁，因此先物化过期；读取不得把原因改写为 aborted。
-            assert db.execute(text(
-                "SELECT status || ':' || failure_reason FROM upload_sessions"
-            )).scalar_one() == "expired:upload_expired"
-            assert db.execute(text(
-                "SELECT status || ':' || failure_reason FROM video_assets"
-            )).scalar_one() == "failed:upload_expired"
+            upload_terminal = db.execute(text(
+                "SELECT status, failure_reason, updated_at FROM upload_sessions WHERE id = :id"
+            ), {"id": upload_id}).one()
+            asset_terminal = db.execute(text(
+                "SELECT status, failure_reason, updated_at FROM video_assets WHERE id = :id"
+            ), {"id": intent["asset"]["id"]}).one()
+        assert upload_terminal.status == "aborted"
+        assert upload_terminal.failure_reason == "upload_aborted"
+        assert asset_terminal.status == "failed"
+        assert asset_terminal.failure_reason == "upload_aborted"
+
+        application.state.clock = lambda: expires_at + timedelta(seconds=1)
+        with TestClient(application) as client:
+            read_response = client.get(base + f"/upload-sessions/{upload_id}", headers=headers)
+        assert read_response.status_code == 200, read_response.text
+        assert read_response.json()["status"] == "aborted"
+        assert read_response.json()["failure_reason"] == "upload_aborted"
+
+        with application.state.sessions() as db:
+            upload_after_read = db.execute(text(
+                "SELECT status, failure_reason, updated_at FROM upload_sessions WHERE id = :id"
+            ), {"id": upload_id}).one()
+            asset_after_read = db.execute(text(
+                "SELECT status, failure_reason, updated_at FROM video_assets WHERE id = :id"
+            ), {"id": intent["asset"]["id"]}).one()
+        assert tuple(upload_after_read) == tuple(upload_terminal)
+        assert tuple(asset_after_read) == tuple(asset_terminal)
+        assert upload_after_read.status != "expired"
+        assert upload_after_read.failure_reason != "upload_expired"
+        assert asset_after_read.failure_reason != "upload_expired"
     finally:
-        race.close()
         engine.dispose()

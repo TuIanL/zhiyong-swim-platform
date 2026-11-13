@@ -44,6 +44,102 @@ def test_published_migrations_are_unchanged():
 
 
 @pytest.mark.sqlite
+def test_sqlite_foreign_keys_stay_enabled_during_explicit_migration(tmp_path, monkeypatch):
+    """在 Alembic 实际使用的 SQLite 连接上核对连接、事务和完成后的 FK 状态。"""
+    import sqlite3
+    import sqlalchemy
+    from sqlalchemy import event
+
+    url = f"sqlite:///{tmp_path / 'foreign-keys.sqlite3'}"
+    config = alembic_config(url)
+    command.upgrade(config, REGISTRY_REVISION)
+
+    observed = {
+        "before_transaction": None,
+        "inside_transaction": None,
+        "inside_transaction_active": False,
+        "inside_transaction_violation_rejected": False,
+        "after_migration_connection": None,
+        "after_migration_transaction_active": None,
+    }
+    original_factory = sqlalchemy.engine_from_config
+
+    def observed_engine_factory(*args, **kwargs):
+        engine = original_factory(*args, **kwargs)
+        probing = {"active": False}
+
+        @event.listens_for(engine, "after_cursor_execute")
+        def inspect_migration_connection(connection, cursor, statement, parameters, context, executemany):
+            if probing["active"]:
+                return
+            normalized = " ".join(statement.upper().split())
+            if normalized == "PRAGMA FOREIGN_KEYS=ON":
+                probing["active"] = True
+                try:
+                    dbapi_connection = connection.connection.driver_connection
+                    observed["before_transaction"] = dbapi_connection.execute(
+                        "PRAGMA foreign_keys"
+                    ).fetchone()[0]
+                finally:
+                    probing["active"] = False
+            elif normalized == "BEGIN":
+                probing["active"] = True
+                try:
+                    dbapi_connection = connection.connection.driver_connection
+                    observed["inside_transaction"] = dbapi_connection.execute(
+                        "PRAGMA foreign_keys"
+                    ).fetchone()[0]
+                    observed["inside_transaction_active"] = dbapi_connection.in_transaction
+                finally:
+                    probing["active"] = False
+            elif normalized.startswith("UPDATE ALEMBIC_VERSION") and not observed[
+                "inside_transaction_violation_rejected"
+            ]:
+                probing["active"] = True
+                try:
+                    dbapi_connection = connection.connection.driver_connection
+                    assert dbapi_connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+                    dbapi_connection.execute("SAVEPOINT fk_probe")
+                    try:
+                        dbapi_connection.execute(
+                            "INSERT INTO training_sessions "
+                            "(id, tenant_id, site_id, created_by_user_id, status, created_at, updated_at) "
+                            "VALUES ('fk-probe', 'missing-tenant', 'missing-site', 'missing-user', "
+                            "'planned', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+                        )
+                    except sqlite3.IntegrityError:
+                        dbapi_connection.execute("ROLLBACK TO fk_probe")
+                        dbapi_connection.execute("RELEASE fk_probe")
+                        observed["inside_transaction_violation_rejected"] = True
+                    else:
+                        dbapi_connection.execute("ROLLBACK TO fk_probe")
+                        dbapi_connection.execute("RELEASE fk_probe")
+                finally:
+                    probing["active"] = False
+
+        @event.listens_for(engine, "close")
+        def inspect_connection_after_migration(dbapi_connection, connection_record):
+            observed["after_migration_connection"] = dbapi_connection.execute(
+                "PRAGMA foreign_keys"
+            ).fetchone()[0]
+            observed["after_migration_transaction_active"] = dbapi_connection.in_transaction
+
+        return engine
+
+    monkeypatch.setattr(sqlalchemy, "engine_from_config", observed_engine_factory)
+    command.upgrade(config, "head")
+
+    assert observed == {
+        "before_transaction": 1,
+        "inside_transaction": 1,
+        "inside_transaction_active": True,
+        "inside_transaction_violation_rejected": True,
+        "after_migration_connection": 1,
+        "after_migration_transaction_active": False,
+    }
+
+
+@pytest.mark.sqlite
 def test_sqlite_rebuild_failure_rolls_back_table_and_version(tmp_path):
     url = f"sqlite:///{tmp_path / 'rebuild.sqlite3'}"
     config = alembic_config(url)
