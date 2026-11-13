@@ -75,15 +75,13 @@ def intent_payload():
 
 
 def capture_pids(app, tables):
-    """按线程记录访问指定表的真实 backend PID；用于并发证据而不只是响应码。"""
-    seen = {}
+    """记录访问指定表的真实 backend PID 集合；用于并发证据而不只是响应码。"""
+    seen = set()
 
     def before(connection, cursor, statement, parameters, context, executemany):
         lowered = statement.lower()
-        if any(f" {table}" in lowered or f"into {table}" in lowered for table in tables):
-            seen.setdefault(threading.current_thread().name, set()).add(
-                connection.connection.driver_connection.info.backend_pid
-            )
+        if any(table in lowered for table in tables):
+            seen.add(connection.connection.driver_connection.info.backend_pid)
 
     engine = app.state.engine
     event.listen(engine, "before_cursor_execute", before)
@@ -166,8 +164,7 @@ def test_concurrent_cancel_and_abort_leave_no_pending_asset(pg_databases, seeded
             stop()
         assert cancel_result.status_code == 200
         assert abort_result.status_code == 204
-        assert len(set().union(*pids.values())) >= 2, pids
-        assert len(pids) == 2, pids
+        assert len(pids) >= 2, pids
 
         with TestClient(application) as client:
             upload = client.get(
@@ -207,7 +204,7 @@ def test_concurrent_grant_writes_keep_one_active_row(pg_databases, seeded_accoun
         finally:
             stop()
         assert all(response.status_code == 204 for response in results), [r.text for r in results]
-        assert len(set().union(*pids.values())) >= 2, pids
+        assert len(pids) >= 2, pids
         with application.state.sessions() as db:
             assert db.execute(text(
                 "SELECT count(*) FROM session_read_grants WHERE revoked_at IS NULL"
@@ -385,7 +382,8 @@ UPLOAD_LOCK = lambda statement: "from upload_sessions" in statement and "for upd
 class ControlledRace:
     """让第一条请求持锁暂停、第二条请求真实阻塞在同一行锁上，再放行。
 
-    与随机调度不同，这里两个事务的先后由 Event 决定；两个 backend PID 都被记录。
+    顺序按「第几次取得该行锁」判定，不依赖线程身份：TestClient 会把同步端点
+    派发到 AnyIO worker 线程，threading.local 在调用线程设置后并不可见。
     """
 
     def __init__(self, app, predicate):
@@ -395,7 +393,7 @@ class ControlledRace:
         self.second_blocked = threading.Event()
         self.release = threading.Event()
         self.pids = {}
-        self._local = threading.local()
+        self._locks = 0
         engine = app.state.engine
         event.listen(engine, "before_cursor_execute", self._before)
         event.listen(engine, "after_cursor_execute", self._after)
@@ -408,23 +406,27 @@ class ControlledRace:
     def _matches(self, statement):
         return self.predicate(statement.lower())
 
-    def _pid(self, connection):
+    @staticmethod
+    def _pid(connection):
         return connection.connection.driver_connection.info.backend_pid
 
     def _before(self, connection, cursor, statement, parameters, context, executemany):
-        if getattr(self._local, "who", None) == "second" and self._matches(statement):
+        # 第一条请求已持锁暂停时，此刻再发起同一锁语句的只能是第二条。
+        if self._matches(statement) and self._locks == 1:
             self.pids["second"] = self._pid(connection)
             self.second_blocked.set()
 
     def _after(self, connection, cursor, statement, parameters, context, executemany):
-        if getattr(self._local, "who", None) == "first" and self._matches(statement):
+        if not self._matches(statement):
+            return
+        self._locks += 1
+        if self._locks == 1:
             self.pids["first"] = self._pid(connection)
             self.first_locked.set()
             if not self.release.wait(20):
                 raise AssertionError("持锁请求没有等到放行信号")
 
-    def run(self, who, job):
-        self._local.who = who
+    def run(self, job):
         with TestClient(self.app) as client:
             return job(client)
 
@@ -433,10 +435,10 @@ def run_ordered(race, first_job, second_job):
     results = {}
 
     def first():
-        results["first"] = race.run("first", first_job)
+        results["first"] = race.run(first_job)
 
     def second():
-        results["second"] = race.run("second", second_job)
+        results["second"] = race.run(second_job)
 
     holder = threading.Thread(target=first, daemon=True)
     holder.start()
