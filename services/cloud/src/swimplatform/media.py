@@ -640,14 +640,20 @@ def _create_intent(
     return UploadIntentRead(upload_session=upload_read(upload), asset=asset_read(asset))
 
 
-def _session_for_intent(db: Session, tenant_id, site_id, session_id) -> TrainingSession:
-    row = get_session(db, tenant_id, site_id, session_id)
-    if row.status == "cancelled":
-        fail(409, "state_conflict", "已取消的会话不接受新的上传意图")
+def _lock_intent_session(db: Session, tenant_id, site_id, session_id) -> TrainingSession:
+    """与 Session 取消共享同一把数据库行锁。
+
+    锁范围包含 tenant/site/session，避免跨机构锁竞争；锁持有到本事务提交，
+    因此「检查状态 → 写 Asset/UploadSession/幂等记录 → 提交」与取消互斥。
+    """
+    row = lock_session(db, tenant_id, site_id, session_id)
+    if not row:
+        fail(404, "training_session_not_found", "训练会话不存在或无访问权限")
     return row
 
 
 def _assert_intent_allowed(db: Session, session: TrainingSession, user, member, now):
+    """在已加锁的会话上重新判定读取、管理与终态。"""
     if not can_read_session(db, session, user, member, now):
         fail(404, "training_session_not_found", "训练会话不存在或无访问权限")
     if not can_manage_session(db, session, user, member):
@@ -662,8 +668,14 @@ def create_upload_intent(
     idempotency_header: Annotated[str, Header(alias="Idempotency-Key")], user: Current, db: DB,
 ):
     _, member = _scope(db, tenant_id, site_id, user)
-    session = get_session(db, tenant_id, site_id, session_id)
     now = server_now(request)
+    # 先做一次无锁能力判定，避免让无权调用者占用行锁；再加锁重查状态与能力。
+    visible = get_session(db, tenant_id, site_id, session_id)
+    if not can_read_session(db, visible, user, member, now):
+        fail(404, "training_session_not_found", "训练会话不存在或无访问权限")
+    if not can_manage_session(db, visible, user, member):
+        fail(403, "forbidden", "当前角色无该会话的上传权限")
+    session = _lock_intent_session(db, tenant_id, site_id, session_id)
     _assert_intent_allowed(db, session, user, member, now)
     key_digest = idempotency_key_digest(idempotency_header)
     digest = request_digest(payload)
@@ -755,7 +767,10 @@ def create_edge_upload_intent(
 ):
     now = server_now(request)
     node, _ = get_edge_identity(db, authorization, now)
-    session = _session_for_intent(db, node.tenant_id, node.site_id, session_id)
+    # 与用户路径一致的父 Session 并发协议：同范围行锁 + 锁后重查终态。
+    session = _lock_intent_session(db, node.tenant_id, node.site_id, session_id)
+    if session.status == "cancelled":
+        fail(409, "state_conflict", "已取消的会话不接受新的上传意图")
     device = db.get(Device, str(payload.device_id))
     if (
         not device

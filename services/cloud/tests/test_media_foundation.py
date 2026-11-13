@@ -351,3 +351,36 @@ def test_session_list_is_cursor_paginated_without_totals(client, seeded_account)
     assert client.get(
         org["base"] + "/training-sessions", headers=org["ch"], params={"limit": 101}
     ).status_code == 422
+
+
+@pytest.mark.parametrize("table", ["video_assets", "upload_sessions", "idempotency_records"])
+def test_intent_atomicity_rolls_back_all_three(client, app, seeded_account, table):
+    """任一步写入失败，Asset、UploadSession 与幂等记录都必须一起回滚。"""
+    from sqlalchemy import event as sa_event, text
+
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+
+    def snapshot():
+        with app.state.engine.connect() as connection:
+            return (
+                connection.execute(text("SELECT count(*) FROM video_assets")).scalar_one(),
+                connection.execute(text("SELECT count(*) FROM upload_sessions")).scalar_one(),
+                connection.execute(text("SELECT count(*) FROM idempotency_records")).scalar_one(),
+            )
+
+    before = snapshot()
+
+    def boom(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().lower().startswith(f"insert into {table}"):
+            raise RuntimeError(f"injected failure on {table}")
+
+    engine = app.state.engine
+    sa_event.listen(engine, "before_cursor_execute", boom)
+    try:
+        with pytest.raises(RuntimeError):
+            create_intent(client, org, session["id"], key=f"atomic-{table}")
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", boom)
+
+    assert snapshot() == before
