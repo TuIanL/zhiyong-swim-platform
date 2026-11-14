@@ -56,13 +56,14 @@ def make_session(client, org, key="edge-session-1"):
 
 def edge_intent(
     client, token, session_id, device_id, *, key="edge-intent-1", expected_size_bytes=4096,
-    capture_metadata=None,
+    expected_sha256=SHA, capture_metadata=None,
 ):
     return client.post(
         f"/api/v1/edge/sessions/{session_id}/upload-sessions",
         headers={"Authorization": f"Bearer {token}", "Idempotency-Key": key},
         json={
-            "device_id": device_id, "expected_size_bytes": expected_size_bytes, "expected_sha256": SHA,
+            "device_id": device_id, "expected_size_bytes": expected_size_bytes,
+            "expected_sha256": expected_sha256,
             "media_type": "video/mp4", "capture_metadata": dict(capture_metadata or META),
         },
     )

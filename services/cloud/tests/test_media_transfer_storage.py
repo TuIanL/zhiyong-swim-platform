@@ -183,7 +183,7 @@ def test_rustfs_full_upload_resume_complete_private_range_and_cleanup(client, se
         app.state.settings = original_settings
 
     # A grantee's presigned URL cannot outlive the specific active grant used to read the asset.
-    reader, reader_headers = seeded_account("coach")
+    reader, reader_headers = seeded_account("media-reader")
     assert client.post(
         f"/api/v1/tenants/{org['tenant']['id']}/members", headers=org["oh"],
         json={"user_id": reader["id"], "role": "coach"},
@@ -573,7 +573,10 @@ def test_expired_upload_is_swept_and_exact_multipart_cleanup_is_confirmed(
                                            content=content, key="sweep-expired-upload-01")
     with app.state.sessions() as db:
         stored = db.get(UploadSession, upload["id"])
-        stored.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        # Age both timestamps together to preserve the database invariant while
+        # modeling an intent whose original expiry has already passed.
+        stored.created_at = datetime.now(UTC) - timedelta(minutes=30)
+        stored.expires_at = stored.created_at + timedelta(minutes=1)
         db.commit()
 
     from swimplatform.media_transfer import sweep_expired
@@ -666,7 +669,7 @@ def test_valid_edge_upload_fails_if_original_credential_expires_before_ready(
     session = new_edge_session(client, org, key="edge-expiry-session")
     created = edge_intent(
         client, token, session["id"], device["id"], key="edge-expiry-intent",
-        expected_size_bytes=len(content),
+        expected_size_bytes=len(content), expected_sha256=hashlib.sha256(content).hexdigest(),
         capture_metadata={"device_time_basis": "unknown", "video_timebase_kind": "relative",
                           "device_clock_source": "unknown"},
     )
@@ -698,6 +701,7 @@ def test_valid_edge_upload_fails_if_original_credential_expires_before_ready(
     with app.state.sessions() as db:
         credential = db.scalar(select(EdgeCredential).where(EdgeCredential.edge_node_id == node["id"]))
         assert credential is not None
+        credential.issued_at = datetime.now(UTC) - timedelta(minutes=1)
         credential.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         db.commit()
     drain_worker(app)
@@ -750,8 +754,10 @@ def test_disabled_edge_device_during_complete_prevents_ready(
     node, token = activate_node(client, org["oh"], org["base"], key="edge-device-change-node")
     device = make_device(client, org["oh"], org["base"], node["id"], key="edge-device-change-device")
     session = new_edge_session(client, org, key="edge-device-change-session")
-    created = edge_intent(client, token, session["id"], device["id"], key="edge-device-change-intent",
-                          expected_size_bytes=len(content))
+    created = edge_intent(
+        client, token, session["id"], device["id"], key="edge-device-change-intent",
+        expected_size_bytes=len(content), expected_sha256=hashlib.sha256(content).hexdigest(),
+    )
     assert created.status_code == 201, created.text
     upload, asset = created.json()["upload_session"], created.json()["asset"]
     headers = {"Authorization": f"Bearer {token}"}
