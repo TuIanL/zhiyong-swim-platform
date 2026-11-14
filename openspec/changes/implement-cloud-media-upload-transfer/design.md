@@ -28,7 +28,7 @@ Notion 的分片任务为「待确认」，验收原文为「上传中断可续�
 
 ## Decisions
 
-以下 **D22–D31 均为本轮待审阅建议**；继承约束与本次用户明确要求单独注明，不继承历史 Apply 授权。Q1–Q8 是审阅/实施门槛，不是默许的生产决策。
+以下 D22–D31 为当前 Change 设计。项目负责人已于 2026-11-14 授权 Apply，并确认本节“开发/CI 决策”中的参数和边界。该授权只覆盖开发环境与隔离 CI，不是生产存储或隐私政策批准。
 
 ### D22 存储协议及候选比较（G1）
 
@@ -40,7 +40,7 @@ Notion 的分片任务为「待确认」，验收原文为「上传中断可续�
 | 私有化 Ceph RGW | 官方提供 S3 multipart/对象接口；可控制数据位置，但要自担容量、冗余、TLS、备份/升级和监控 | 私有化候选，也可作为隔离集成服务；本稿不承诺生产部署 |
 | 云端本地文件系统 | 简单，但缺少直传 multipart、短签名与真实云对象语义 | 仅测试 double 可用，不作为本次真实存储验收的替代 |
 
-建议首版业务只依赖 `StorageProvider` 协议，具体 SDK 完全封装在 `S3StorageProvider`；可选安装 SDK 的版本/摘要在 Apply 依赖锁中固定，不由路由直接 import。生产 provider、区域、bucket、端点与加密配置仍待 Q1/Q2；测试服务选择不等于生产选型。
+首版业务只依赖 `StorageProvider` 协议，具体 SDK 完全封装在 `S3StorageProvider`，路由不直接 import 厂商 SDK。Apply/CI 固定使用 RustFS `1.0.5-glibc` 的 linux/amd64 镜像 digest `sha256:f36a122c886d99206df9a1dc1efcc96543db3ae206718e0527509dbf1b27c662`，镜像来源 `ghcr.io/rustfs/rustfs`，该版本 Apache-2.0；SDK 固定 boto3 `1.44.3`，Apache-2.0。该 profile 只用于合成视频的隔离测试，不是生产选型。能力测试必须实际核验创建/分页/签名 multipart、HEAD/精确读取、Range、版本、私有访问、abort/delete 与错误语义；RustFS 官方兼容矩阵注明 multipart 分页边缘行为未纳入其默认兼容门，因此本项目必须自行覆盖这些场景。生产 provider、区域、bucket、端点和加密配置仍未冻结。
 
 | Adapter 操作 | 输入/输出与必要保证 |
 | --- | --- |
@@ -55,7 +55,12 @@ Notion 的分片任务为「待确认」，验收原文为「上传中断可续�
 
 错误归一为 unavailable、permission_denied、not_found、conflict、ambiguous，保留脱敏 provider request ID；不暴露 SDK 响应、签名 query 或密钥。外部对象位置不能由客户端 URL 传入，避免 verifier/清扫成为 SSRF 或任意删除接口。
 
-研究依据（2026-11-14 查阅官方文档，属于协议事实，不是本项目产品承诺）：
+研究依据（开发/CI 选型核查，属于供应商资料，不是生产产品承诺）：
+
+- [RustFS 官方容器说明](https://docs.rustfs.com/en/installation/container)：官方容器可运行单节点单盘测试实例；该模式无冗余，只适合本地测试/小型场景。本项目使用 GHCR `1.0.5-glibc`、amd64 固定 digest，避免可变标签。
+- [RustFS 官方兼容矩阵](https://docs.rustfs.com/en/reference/s3-compatibility)：列出 multipart create/upload/complete/abort、Range、预签 GET/PUT 等已测试子集，同时说明 multipart listing/part lookup 边缘行为不在其默认 gate；项目自己的能力测试是启用 profile 的门禁。
+- [RustFS 官方许可证](https://github.com/rustfs/rustfs/blob/main/LICENSE)与[包镜像元数据](https://github.com/rustfs/rustfs/pkgs/container/rustfs)：Apache-2.0；所用 1.0.5-glibc amd64 manifest digest 为 `f36a122c886d99206df9a1dc1efcc96543db3ae206718e0527509dbf1b27c662`。
+- [boto3 1.44.3 PyPI 元数据](https://pypi.org/project/boto3/1.44.3/)：AWS SDK 版本固定为 1.44.3，许可证 Apache-2.0。
 
 - [S3 分片限制](https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html)：当前编号 1–10000，普通分片下限 5 MiB，末片可更小；列表须处理分页。采用本项目更小上限，不能把 provider 上限当产品承诺。
 - [S3 multipart](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html)及[Complete API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)：按序组装、ETag 清单及响应体错误；合并成功不等于本项目全对象 SHA-256 已验证。
@@ -98,7 +103,7 @@ Site            1 --> N media_cleanup_candidates --> 0..1 media_objects
 - Asset 加可空 `storage_object_ref`（media_objects.id）与 `verified_size_bytes/verified_media_type/verified_at`，复合 FK `(tenant,site,session,id,storage_object_ref)` → media_objects `(tenant,site,session,asset,id)`；ready CHECK 扩展为这些字段、checksum、received_at 均存在，且旧 `size_bytes/media_type` 在 ready 时等于 verified 对应值。pending/failed 的 verified 字段、checksum、正式引用为空；内部失败观察值只保存在 media_objects。M2 `size_bytes/media_type` 在验证前继续表示声明，不改变旧字段含义；UploadSession 永久保留声明值。
 - `received_at` 是服务端首次确认完整物理对象已经存在的时间，不是校验结束或采集时间；在最终事务中复制已保存 assembled_at，`verified_at` 另存。失败不伪造 received_at，首次值不被重试覆盖。
 - `idempotency_records.operation` 增加 `upload.complete`，resource_kind 继续为 upload_session，复用现有主体配对、部分唯一索引、key/request 摘要；不保存完整请求体、URL、凭据。无 TTL 淘汰以沿用持久 replay；幂等元数据留存不是视频无限保留政策。
-- media_jobs 的 accepted主体/认证ID由认证上下文写入，分别RESTRICT引用users/edge_nodes/auth_sessions/edge_credentials；User工作要求user与auth_session配对，Edge工作要求node与credential配对并核对同scope，非完成工作不伪造这些字段。租约/候选均保存累计attempts与安全错误，不覆盖首次观察/首次确认审计。
+- media_jobs 的 accepted主体/认证ID由认证上下文写入；User ID RESTRICT 引用 users，accepted_auth_session_hash 只保留 AuthSession 的不可逆摘要且**不建外键**，使用户可在作业等待期间退出并删除 AuthSession，最终 worker 以记录缺失判定原身份失效。Edge Node/Credential 仍由同scope RESTRICT 外键引用。User 工作要求 user 与 auth-session hash 配对，Edge 工作要求 node 与 credential 配对，非完成工作不伪造这些字段。最终校验还重读 User.is_active。租约/候选均保存累计 attempts 与安全错误，不覆盖首次观察/首次确认审计。
 - 交叉表 completed/ready 配对需要同事务应用服务与真实失败注入证明，单表 CHECK/非空不能证明整对象字节或全部跨表状态。
 
 ### D25 身份、授权矩阵及 M2 WARNING 收口
@@ -145,7 +150,7 @@ Site            1 --> N media_cleanup_candidates --> 0..1 media_objects
 - 分片布局在首次 part-urls 被接受时生成并登记所有 part_number/expected_size，SDK 初始化由持久 initialize 工作执行；并行上传、乱序到达允许，complete 清单必须1..N升序且无空洞。重复签名只是刷新短期能力，不新增记录或延长意图。
 - GET parts 按编号分页（默认100，上限1000），cursor 绑定 tenant/site/upload/generation/编号；遍历 provider 内部分页，不把内部 continuation token 暴露为授权。provider 缺失或回执改变将原确认标记stale并返回409 part_conflict，保留首次回执/时间，不覆盖为新确认；可重传原字节恢复原回执，否则须中止后新意图。GET发现已传但未登记回执可在核对大小后补首次确认。快照后必须再核对 generation/status，不能把 I/O 前状态写回。终态查询返回已保存的确认历史，不复活 multipart。
 - 既有 GET UploadSession 保留原字段并增量返回 `transfer_status/part_size_bytes/part_count`，`confirmed_parts` 为最后核对的确认列表（有界，非完整性证明）；客户端大列表以 GET parts 为准。metadata GET 不因存储暂时不可用而误改失败终态。
-- CompleteRead：`upload_session/asset` 与 `poll_url`。202=已持久接受但未完成；200=SQL已原子completed/ready；poll继续使用既有GET UploadSession及Asset详情。accepted manifest/hash持久固定；合法结构但未确认409，结构、顺序、编号非法422。相同key异body409优先于新状态判断；同清单不同key可回同结果但不能再合并，另一清单409 upload_not_completable。
+- CompleteRead：`upload_session/asset` 与 `poll_url`。初次接受清单为 202，已持久接受、由同一作业继续；同一 key/相同 manifest 在 `completing` 返回 202 且不创建第二工作；在 `completed/ready` 返回 200 当前结果；在 `failed/expired/aborted` 返回 409 `upload_not_completable`，响应诊断原终态与原失败原因，禁止重排工作或重写终态。相同 key、不同 manifest 在任何状态下均优先返回 409 `idempotency_conflict`。不同 key、同 manifest 在已有完成工作时加入/读取同一业务结果，不生成第二对象合并工作；不同 manifest 返回 409。合法但未确认清单为 409 `part_not_confirmed`，清单结构/排序/编号非法为 422。
 - 进入completing后布局及首次确认的ETag/size集合冻结，不允许新增/改写分片确认；worker从冻结行重建清单并核对complete_manifest_hash。GET parts此时可读/报告provider变化，但不能把新回执覆盖为accepted manifest；终态后仍只读确认历史。
 - AssetRead 增加 `verified_size_bytes/verified_media_type/verified_at`；不增加客户端可写的 source/capture/storage/status 字段。
 - AccessUrlRead：`asset_id/url/expires_at/required_headers`，不返回独立对象 key；签发响应 `Cache-Control: private, no-store`、`Referrer-Policy: no-referrer`。播放/下载不做幂等缓存，每次都重新判权并可生成新短 URL。
@@ -167,9 +172,9 @@ intent(uploading,pending_upload)
 1. API 预检当前主体/权限与对象 scope。complete 在短事务按 D28 锁顺序重查状态/期限/清单；同参记录优先重放，首次接受把 completing、不可变清单摘要、complete job 与幂等记录一次提交，之后才允许 worker 外部合并；不持数据库连接/行锁等待下载或哈希。
 2. Worker 是独立受监督进程/CLI，不用 FastAPI BackgroundTasks 当持久队列。领取 job 使用数据库租约与单调 generation；PG 可用 SKIP LOCKED，SQLite 条件 UPDATE，领取事务短且可回滚。外部 I/O 使用有界连接/读超时和有限重试，所有提交带 lease/generation CAS；续租不改变业务 expires_at。
 3. 组装前重新分页核对所有已登记 part 的最新 provider 编号、大小、回执和清单；既有 URL 可能重写分片，SQL确认不是冻结 provider 内容。用冻结回执完成合并，处理内嵌错误；NoSuchUpload 不证明成功，须 HEAD exact key+project metadata+version，再走全对象读取。尚无对象时按 ambiguous 重试/对账，不启动新逻辑上传。
-4. 对合并对象记录首次 assembled_at 与 version；逐字节流式累计 size 与 SHA-256。独立 verifier 将同一对象流落到受限临时文件并调用固定版本媒体探测器（候选 ffprobe），不允许网络协议、任意路径、shell拼接或无限CPU/内存/输出；设置文件大小、时间、磁盘空间与进程资源预算。HEAD的Content-Type、后缀、ETag和分片checksum都不是真实类型/整文件hash证据。允许类型和探测器部署门槛见Q4，不能边实施边接受任意类型。
+4. 对合并对象记录首次 assembled_at 与 version；逐字节流式累计 size 与 SHA-256。独立 verifier 将同一对象流落到受限临时文件并调用固定版本 ffprobe，无网络协议、任意路径、shell 拼接或无限 CPU/内存/输出；设置文件大小、时间、磁盘空间与进程资源预算。只接受通过探测的 MP4 容器，探测结果必须与具体声明类型一致，不转码。HEAD 的 Content-Type、后缀、ETag 和分片 checksum 都不是真实类型/整文件 hash 证据。
 5. size 必须等于 expected_size_bytes，SHA 必须等于 expected_sha256。媒体类型由探测结果规范化：声明空/`application/octet-stream` 可由真实允许类型补全；具体类型声明须与探测类型匹配，否则 validation_failed。文件容器允许不等于浏览器编解码保证；不做转码。验证原始值存 media_objects，Asset 的已验证字段只在最终事务写入。
-6. 最终短事务重新锁定 Session/Upload/Asset/Object/Job，重取 server now、未取消、未过期、completing、代际/租约与精确对象身份、不在delete_pending，核对当前发起用户的成员/Site/S-manage和接受complete的用户会话仍有效，或节点active/Device active及接受 complete 的凭据未撤销/过期。失权以 upload_failed 配对收口并清理（方案选择，列入Q4审阅）；不保存明文身份。成功一次写 completed_at、Asset.ready/实际值/received_at/verified_at/引用、Object.verified、Job.succeeded。
+6. 最终短事务重新锁定 Session/Upload/Asset/Object/Job，重取 server now、未取消、未过期、completing、代际/租约与精确对象身份、不在 delete_pending；重查当前主体权限、请求接受时的原身份有效性、Edge Node/Device 行政状态、UploadSession 状态与期限。用户退出/原登录会话到期或撤销、用户停用或成员/Site/S-manage 失效、Edge 凭据到期/撤销、Node/Device 停用时，均不产生 ready；上传和 Asset 原子配对 `failed/upload_failed` 并留下脱敏审计原因与清理登记。退出不被待处理作业阻止，也不保存明文身份。成功时一次写 completed_at、Asset.ready/实际值/received_at/verified_at/引用、Object.verified、Job.succeeded。
 7. 暂时 I/O/DB错误保留 completing 与可重试 job；业务期限到达优先 expired，不因重试延长。确定校验失败 `validation_failed`；准备/传输重试耗尽或失权 `upload_failed`。终态配对与清理登记同事务。数据库提交失败可对同一已组装对象重新验证后CAS；旧worker结果作废，不能直接删其曾经处理但已被新代际接管的对象。
 
 “物理请求恰好一次”无法跨 SQL/provider 保证，承诺的是业务逻辑记录唯一、终态一次、精确对账和可重试清理。初始化响应丢失可能留下同 key 多个 MPU，须 list_multipart 找到并清理未被当前绑定选中的句柄；记录先提交再执行外部初始化，避免全部外部副作用没有业务落点。
@@ -221,21 +226,21 @@ PostgreSQL验收必须覆盖每对两种顺序：Cancel vs finalize、Abort vs f
 
 新增配置一律 `SWIM_CLOUD_MEDIA_*`/Secret引用，禁止借用父目录.env或PG业务库/真实桶。启用开关默认关闭；关闭时新传输/签名503，M2元数据及终态读取保持可用；旧意图expires_at不因打开开关而重置。生产缺少明确profile、region、私有ACL/版本能力、授权与保留决策记录即拒绝启用，不能fallback本地静态目录。
 
-候选开发profile（**全部待负责人审阅，不是生产冻结值**）：
+已批准的开发/CI profile（不是生产冻结值）：
 
 | 参数 | 候选值/硬约束 | 依赖与验收 |
 | --- | --- | --- |
 | UploadSession TTL | 已确认默认24h、最长7d，服务端配置 | 原M2语义不变，completing也不延期 |
 | EdgeCredential | 已确认7d/最长30d，无自动续期 | 35天断网需受控重签，不是M3补传自动恢复 |
-| max_object_bytes | 候选2 GiB，正数且<=布局/provider容量 | 新意图上限收窄须Q3；历史replay不受新策略截断 |
-| part_size / max_parts | 候选16 MiB / 硬上限10000，最后一片1..part_size | `N=ceil(size/part_size)`，固定后配置变化不改已有布局；配置非法启动失败 |
-| 签名批次 | 候选100个；查询默认100/上限1000 | 编号唯一、总大小有界；provider分页不能遗漏 |
-| part URL TTL | 候选300秒，上限300秒且不越过意图/签发身份期限 | 重试可刷新URL，不刷新意图；先保存写窗口 |
-| access URL TTL | 候选默认60秒，硬上限300秒 | 现用户要求最大5分钟；不等于强制中断已有传输 |
-| verifier | 候选固定版本ffprobe、MP4允许列表；类型策略需Q4 | 仅合成合法/伪装/损坏样本，执行资源预算和版本/镜像摘要在Apply固定 |
-| 外部I/O预算 | 候选connect5s/read30s；验证总预算10min，临时磁盘至少max_object+余量 | 需按对象规模在Apply试验校准，耗尽不ready；不能无限等待 |
-| 作业租约/重试 | 候选120s、30s续租、5次；指数退避上限5min | 重试/续租不越过业务期限，失败有终态/审计 |
-| 清扫 | 候选每60s/100条；迟到宽限10min、孤儿观察24h且至少两次 | 仅技术残留；默认先dry-run清单，自动清理需Q5批准，失败非零 |
+| max_object_bytes | 新建意图最大 2 GiB | 正数且不超过布局/provider 能力；历史意图保留原值与读写解析，物理准备对超限返回 `transfer_policy_conflict` |
+| part_size / max_parts | 固定分片 16 MiB / provider 上限 10000 | `N=ceil(size/part_size)`，最后片为剩余字节；布局固定后配置变化不改既有意图 |
+| 签名批次 | 每次最多 100 个；查询默认 100/上限 1000 | 编号唯一、总大小有界；provider 分页不能遗漏 |
+| part URL TTL | 最长 300 秒 | 且不越过意图、身份期限；重试刷新 URL，不刷新意图；先持久化写窗口 |
+| access URL TTL | 默认 60 秒、硬上限 300 秒 | 不等于强制中断已开始的传输 |
+| verifier | 固定版本 ffprobe，MP4 容器允许列表 | 无网络、文件/时间/CPU/内存/磁盘/输出上限；合成合法/伪装/损坏媒体，不转码 |
+| 外部 I/O 预算 | connect 5s/read 30s；单次校验总预算 10min，临时磁盘至少 max_object+余量 | 通过受控故障测试校准重试与超时；预算耗尽不可 ready |
+| 作业租约/重试 | 初始值 120s、30s 续租、5 次；指数退避上限 5min | 通过真实集成故障测试校准后记录实际开发配置；重试/续租不越过业务期限 |
+| 清扫 | 初始每 60s/100 条；迟到宽限 10min、孤儿观察 24h 且至少两次 | 技术残留清理默认 dry-run；只可在确认属于本次可销毁隔离测试环境后自动精确清理；不得自动删 ready、Edge 原件或未知对象 |
 
 Apply部署包计划包含配置样例、独立worker/sweep命令、健康检查、启动/暂停/排空顺序、Secret及最小对象权限、私有bucket/CORS/版本检查、临时磁盘配额和恢复runbook。没有外部消息服务前置；SQL持久工作只服务本对象传输，不扩成M4领域事件总线。存储服务容量/多副本/备份由具体部署方案决定，不能把开发单机服务当高可用生产。
 
@@ -298,15 +303,13 @@ Notion唯一任务来源，以下不是新任务或状态修改：
 
 | ID | 未决内容与本稿建议 | 停止/实施门槛 |
 | --- | --- | --- |
-| Q1 | 首个Adapter建议S3协议；真实集成服务建议隔离Ceph RGW或经确认的S3兼容测试服务，具体版本/镜像摘要和许可尚未选定 | Apply前确认开发/CI实现profile；生产产品/区域不因确认测试profile冻结 |
-| Q2 | 生产产品、区域、数据责任/隐私授权、未成年人同意、保留/备份/删除窗口、全视频默认同步策略均未定 | 生产启用前负责人决策；不阻塞合成数据的规划或经授权开发，但不能报生产就绪 |
-| Q3 | 默认16MiB分片、2GiB对象、100批签名等候选；新增意图由2**53收窄有兼容影响 | Apply前明确批准大小/数量/TTL配置；旧意图保留并可明确拒绝物理准备，不静默截断或改声明 |
-| Q4 | 媒体允许列表/探测器/资源预算；建议先MP4容器并独立验证，不承诺转码。建议最终提交重查当前主体/接受凭据和来源状态，失权则upload_failed | Apply前确认可观察格式与失权行为；当前提案规格表达安全上界，不视为已批准业务政策 |
-| Q5 | 只删技术残留；迟到宽限10min、孤儿24h/两次观察、自动清扫或先dry-run待确认 | 自动物理删除前确认；ready与本地原件不纳入此参数；业务保留删除另阶段 |
-| Q6 | 作业租约、并发数、退避和I/O预算为开发候选 | Apply基于有界故障试验校准并写配置/证据，不改状态机/范围；不得无限重试 |
-| Q7 | SigV4/CORS/Range/版本化与端点域名的具体配置 | 在选定测试profile后填写；生产TLS/域名/Secret不写入仓库，能力不满足拒绝启用 |
-| Q8 | 即时撤权代理、HLS/转码、MediaBlob共享、35天身份恢复、M4同步冲突协议 | 明确后续，不作为本M3偷偷增加的前置或已实施能力 |
-
-Q1/Q3/Q4涉及实现profile或可观察行为，明确留待这次Draft审阅确认，**未解决不得自行Apply**；用户已要求在产品和区域等未决条件下提交Propose，本稿以候选方案供审阅，不填“默认已同意”。Q6/Q7是可延后校准/配置细节，不能因此改变规格安全边界。
+| Q1 | 统一 StorageProvider + S3 Adapter；测试 profile 为 RustFS 1.0.5-glibc、linux/amd64、固定 digest；boto3 1.44.3；Apache-2.0 | 仅限合成媒体的开发/隔离 CI；不构成生产供应商、区域或保留决策 |
+| Q2 | 生产厂商、区域、视频隐私/监护人同意、保留、备份与删除政策仍未冻结 | 生产存储保持禁用；不阻塞合成数据的 Apply，不可报告生产就绪 |
+| Q3 | 新建意图 2 GiB、分片 16 MiB、每次最多 100 签名、Part URL 最长 300 秒、访问 URL 默认 60 秒且硬上限 300 秒；M2 TTL 不变 | 历史超过 2 GiB 意图仍解析、读取、同键重放、中止和到期；物理准备 409 `transfer_policy_conflict` |
+| Q4 | 仅接收受限探测通过的 MP4；固定 ffprobe；最终发布前严格重核权限、接受身份、Node/Device 状态、UploadSession 状态和期限 | 身份失效则 `upload_failed` 配对并留审计；边界仅限开发/CI实现，不代表新增生产政策 |
+| Q5 | 残留清理默认 dry-run；允许在确认本次隔离测试实例可销毁后，精确自动清理 | 不自动删 ready 视频、本地 Edge 原件或来源不明对象 |
+| Q6 | 租约/重试/超时预算候选 | 通过真实故障和集成测试校准，并记录最终开发配置；不得突破安全边界 |
+| Q7 | SigV4、CORS、Range 与版本能力候选 | 通过 RustFS 实际能力测试门禁；生产 TLS/域名/Secret 不写入仓库 |
+| Q8 | 即时撤权代理、HLS、转码、MediaBlob、35 天身份恢复、M4 云边同步 | 继续排除，不作为本 Change 前置或本次已实施能力 |
 
 本轮完成后只交付提案与Draft PR/Notion回链。没有独立Verify、Archive、主规格同步或Merge授权；所有实施验收仍为待执行。

@@ -148,7 +148,7 @@ coach与athlete使用相同的非管理角色分支，但已有场景主要创�
 | 列/读 Session、Session 资产子列表 | S-read（子列表再逐资产按 A-read 过滤） | 不可见一律 404 |
 | 创建 Session | Owner/Admin，或该 Site 的 coach | 角色不足 403；非成员/错场馆 404 |
 | PATCH Session（title/status） | S-manage | 可读但不可管理 403；不可读 404 |
-| 读/播放签发（播放属 M3） | A-read | 404 |
+| 读/播放与下载 URL 签发（M3） | A-read 且 Asset ready | 404；未 ready 返回409 |
 | 创建上传意图 | 用户路径 S-manage；Edge 路径为节点凭据 + 同节点、同场馆、active 设备 | 403 / 404 / 409（cancelled、设备停用） |
 | 授予/撤销 grant | 本机构 Owner/Admin | coach 调用 403；受授人非本机构 404；非 coach 或无该场馆访问 422 `grantee_not_eligible` |
 
@@ -165,4 +165,12 @@ coach与athlete使用相同的非管理角色分支，但已有场景主要创�
 ### 本节仍未覆盖
 
 - 学员（athlete）读取路径、教练—学员关系与监护人同意未实现；本片 athlete 既不能作为受授人，也不能经资源授权读取。
-- 平台角色、RLS、通用审计事件表、播放 URL 签发与端到端媒体链未实现（播放属 M3）。
+- 平台角色、RLS、通用审计事件表和完整端到端媒体链不属于 M2 RBAC Change；M3 的播放/下载 URL 与访问期限约束见下节。
+
+## 媒体传输与短期访问 URL（M3 已实现）
+
+M3 用户路径在每次签发 URL 时重查当前 A-read、Asset.ready、精确的已验证对象版本和当前 AuthSession；Edge 上传路径使用专用 Credential，与用户 Bearer 隔离。短期 Part URL 不晚于上传意图或发起身份期限；播放/下载 URL 的 TTL 不超过配置默认值60秒、硬上限300秒，也不晚于当前用户登录会话及用于授权的有效期限。grant、Site 或成员权限撤销后，后续 API 与新 URL 签发立即重新判定；已经签发的 URL 在自身到期前仍可能被使用，不承诺即时撤权。
+
+Complete worker 在 ready 提交前再次核验接受时身份仍有效：User AuthSession、当前机构/场馆权限和 S-manage；或原 Edge Credential、Node/Device active 与绑定关系。身份在长时间传输/校验期间失效时，Asset 与 UploadSession 同事务进入 `failed/upload_failed`，不产生 ready。对象存储 I/O 在 SQL 事务外；媒体终态竞争使用 `Session → UploadSession → Asset → MediaObject → job/parts/cleanup` 锁顺序。
+
+这些约束是应用层授权与短期签名 URL，不是 RLS，也不构成生产存储或数据保留政策已批准的证据。生产媒体存储仍关闭。

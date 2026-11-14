@@ -429,8 +429,74 @@ class AssetRead(BaseModel):
     media_type: str | None
     size_bytes: int | None
     checksum_sha256: str | None
+    verified_size_bytes: int | None = None
+    verified_media_type: str | None = None
+    verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PartURLsRequest(Input):
+    part_numbers: list[int] = Field(min_length=1, max_length=100)
+
+    @field_validator("part_numbers")
+    @classmethod
+    def unique_parts(cls, value):
+        if len(value) != len(set(value)) or any(n < 1 or n > 10_000 for n in value):
+            raise ValueError("分片编号必须唯一且在 1..10000 内")
+        return value
+
+
+class PartURLRead(BaseModel):
+    part_number: int
+    url: str
+    expires_at: datetime
+    required_headers: dict[str, str] = {}
+    expected_size_bytes: int
+
+
+class PreparationRead(BaseModel):
+    upload_session_id: str
+    asset_id: str
+    transfer_status: str
+    poll_url: str
+    retry_after_seconds: int = 2
+
+
+class PartConfirmation(Input):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    etag: str = Field(min_length=1, max_length=512)
+    size_bytes: int = Field(gt=0)
+
+
+class PartConfirmedRead(BaseModel):
+    part_number: int
+    size_bytes: int
+    etag: str
+    confirmed_at: datetime
+    state: str = "confirmed"
+
+
+class PartPage(BaseModel):
+    items: list[PartConfirmedRead]
+    next_cursor: str | None = None
+
+
+class CompletePart(Input):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    part_number: int = Field(ge=1, le=10_000)
+    etag: str = Field(min_length=1, max_length=512)
+
+
+class CompleteRequest(Input):
+    parts: list[CompletePart] = Field(min_length=1, max_length=10_000)
+
+
+class AccessUrlRead(BaseModel):
+    asset_id: str
+    url: str
+    expires_at: datetime
+    required_headers: dict[str, str] = {}
 
 
 class UploadSessionRead(BaseModel):
@@ -444,6 +510,9 @@ class UploadSessionRead(BaseModel):
     media_type: str | None
     expires_at: datetime
     confirmed_parts: list = []
+    transfer_status: str = "not_prepared"
+    part_size_bytes: int | None = None
+    part_count: int | None = None
     completed_at: datetime | None
     failure_reason: str | None
     created_at: datetime
@@ -453,6 +522,12 @@ class UploadSessionRead(BaseModel):
 class UploadIntentRead(BaseModel):
     upload_session: UploadSessionRead
     asset: AssetRead
+
+
+class CompleteRead(BaseModel):
+    upload_session: UploadSessionRead
+    asset: AssetRead
+    poll_url: str
 
 
 class Page(BaseModel):

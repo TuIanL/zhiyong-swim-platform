@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "swim-platform-cloud"
 version = "0.1.0"
-description = "智泳云枢新版云端账号、机构与场馆基础"
+description = "智泳云枢云端基础与私有媒体传输"
 requires-python = ">=3.13,<3.14"
 dependencies = [
   "fastapi==0.115.6", "pydantic==2.10.4", "sqlalchemy==2.0.36",
-  "uvicorn==0.32.1", "alembic==1.14.0", "psycopg[binary]==3.2.3",
+  "uvicorn==0.32.1", "alembic==1.14.0", "psycopg[binary]==3.2.3", "boto3==1.44.3",
 ]
 
 [project.optional-dependencies]

@@ -21,11 +21,14 @@ from pg_support import SCHEMA
 pytestmark = pytest.mark.postgresql
 
 BASE_REVISION = "20261106_0001"
-REVISION = "20261112_0003"
+REVISION = "20261114_0004"
 REGISTRY_REVISION = "20261110_0002"
 TABLES = {"users", "auth_sessions", "tenants", "tenant_memberships", "sites", "site_memberships"}
 REGISTRY_TABLES = {"edge_nodes", "devices", "edge_credentials", "idempotency_records"}
-MEDIA_TABLES = {"training_sessions", "video_assets", "upload_sessions", "session_read_grants", "asset_read_grants"}
+MEDIA_TABLES = {
+    "training_sessions", "video_assets", "upload_sessions", "session_read_grants", "asset_read_grants",
+    "media_objects", "upload_parts", "media_jobs", "media_cleanup_candidates",
+}
 
 
 def alembic_config(url: str) -> Config:

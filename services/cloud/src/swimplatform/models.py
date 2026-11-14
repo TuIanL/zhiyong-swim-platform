@@ -198,6 +198,7 @@ class EdgeCredential(Base):
             name="ck_edge_credentials_revocation_actor",
         ),
         Index("ix_edge_credentials_node_generation", "tenant_id", "site_id", "edge_node_id", "generation"),
+        Index("uq_edge_credentials_scope_id", "tenant_id", "site_id", "edge_node_id", "id", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -353,6 +354,12 @@ class VideoAsset(Base):
             ["video_assets.tenant_id", "video_assets.site_id", "video_assets.session_id", "video_assets.id"],
             ondelete="RESTRICT", name="fk_video_assets_derived_parent",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id", "id", "storage_object_ref"],
+            ["media_objects.tenant_id", "media_objects.site_id", "media_objects.session_id",
+             "media_objects.asset_id", "media_objects.id"],
+            ondelete="RESTRICT", name="fk_video_assets_storage_object_scope", use_alter=True,
+        ),
         CheckConstraint("origin IN ('edge', 'manual', 'derived')", name="ck_video_assets_origin"),
         CheckConstraint("status IN ('pending_upload', 'ready', 'failed')", name="ck_video_assets_status"),
         CheckConstraint(
@@ -390,8 +397,15 @@ class VideoAsset(Base):
         # 「无整对象校验不得 ready」写成库层约束，而不是仅靠代码约定。
         CheckConstraint(
             "status <> 'ready' OR (checksum_sha256 IS NOT NULL AND received_at IS NOT NULL "
-            "AND size_bytes IS NOT NULL AND media_type IS NOT NULL)",
+            "AND size_bytes IS NOT NULL AND media_type IS NOT NULL AND storage_object_ref IS NOT NULL "
+            "AND verified_size_bytes IS NOT NULL AND verified_media_type IS NOT NULL AND verified_at IS NOT NULL "
+            "AND size_bytes = verified_size_bytes AND media_type = verified_media_type)",
             name="ck_video_assets_ready_requires_verification",
+        ),
+        CheckConstraint(
+            "status = 'ready' OR (storage_object_ref IS NULL AND verified_size_bytes IS NULL "
+            "AND verified_media_type IS NULL AND verified_at IS NULL)",
+            name="ck_video_assets_unverified_has_no_reference",
         ),
         CheckConstraint("device_time_basis IN ('utc', 'offset', 'iana_timezone', 'unknown')", name="ck_video_assets_time_basis"),
         CheckConstraint("video_timebase_kind IN ('relative', 'wall_clock', 'unknown')", name="ck_video_assets_timebase_kind"),
@@ -468,6 +482,10 @@ class VideoAsset(Base):
     media_type: Mapped[str | None] = mapped_column(String(128))
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     checksum_sha256: Mapped[str | None] = mapped_column(String(64))
+    storage_object_ref: Mapped[str | None] = mapped_column(String(36))
+    verified_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    verified_media_type: Mapped[str | None] = mapped_column(String(128))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
@@ -476,6 +494,9 @@ class UploadSession(Base):
     __tablename__ = "upload_sessions"
     __table_args__ = (
         UniqueConstraint("asset_id", name="uq_upload_sessions_asset"),
+        UniqueConstraint(
+            "tenant_id", "site_id", "session_id", "asset_id", "id", name="uq_upload_sessions_scope_asset_id"
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "site_id", "session_id", "asset_id"],
             ["video_assets.tenant_id", "video_assets.site_id", "video_assets.session_id", "video_assets.id"],
@@ -500,6 +521,20 @@ class UploadSession(Base):
             name="ck_upload_sessions_single_initiator",
         ),
         CheckConstraint("expected_size_bytes > 0", name="ck_upload_sessions_expected_size"),
+        CheckConstraint(
+            "(part_size_bytes IS NULL AND part_count IS NULL) OR "
+            "(part_size_bytes IS NOT NULL AND part_size_bytes > 0 AND part_count IS NOT NULL "
+            "AND part_count BETWEEN 1 AND 10000)", name="ck_upload_sessions_layout_pair",
+        ),
+        CheckConstraint(
+            "(complete_manifest_hash IS NULL AND complete_requested_at IS NULL) OR "
+            "(complete_manifest_hash IS NOT NULL AND length(complete_manifest_hash) = 64 "
+            "AND complete_requested_at IS NOT NULL)", name="ck_upload_sessions_manifest_pair",
+        ),
+        CheckConstraint(
+            "status NOT IN ('completing', 'completed') OR complete_manifest_hash IS NOT NULL",
+            name="ck_upload_sessions_complete_requires_manifest",
+        ),
         CheckConstraint(
             "length(expected_sha256) = 64 AND expected_sha256 = lower(expected_sha256)",
             name="ck_upload_sessions_expected_sha",
@@ -535,6 +570,234 @@ class UploadSession(Base):
     media_type: Mapped[str | None] = mapped_column(String(128))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+    part_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    part_count: Mapped[int | None] = mapped_column(Integer)
+    complete_manifest_hash: Mapped[str | None] = mapped_column(String(64))
+    complete_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MediaObject(Base):
+    __tablename__ = "media_objects"
+    __table_args__ = (
+        UniqueConstraint("upload_session_id", name="uq_media_objects_upload_session"),
+        UniqueConstraint(
+            "tenant_id", "site_id", "session_id", "asset_id", "id", name="uq_media_objects_scope_asset_id"
+        ),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_media_objects_scope_id"),
+        UniqueConstraint("provider_profile", "bucket", "object_key", name="uq_media_objects_location"),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id", "asset_id"],
+            ["video_assets.tenant_id", "video_assets.site_id", "video_assets.session_id", "video_assets.id"],
+            ondelete="RESTRICT", name="fk_media_objects_asset_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id", "asset_id", "upload_session_id"],
+            ["upload_sessions.tenant_id", "upload_sessions.site_id", "upload_sessions.session_id",
+             "upload_sessions.asset_id", "upload_sessions.id"],
+            ondelete="RESTRICT", name="fk_media_objects_upload_scope",
+        ),
+        CheckConstraint(
+            "phase IN ('reserved', 'preparing', 'uploading', 'assembled', 'verified', 'delete_pending', 'deleted')",
+            name="ck_media_objects_phase",
+        ),
+        CheckConstraint("generation >= 1", name="ck_media_objects_generation"),
+        CheckConstraint("observed_size_bytes IS NULL OR observed_size_bytes > 0", name="ck_media_objects_observed_size"),
+        CheckConstraint(
+            "observed_sha256 IS NULL OR (length(observed_sha256) = 64 AND observed_sha256 = lower(observed_sha256))",
+            name="ck_media_objects_observed_sha256",
+        ),
+        CheckConstraint(
+            "phase <> 'verified' OR (observed_size_bytes IS NOT NULL AND observed_sha256 IS NOT NULL "
+            "AND observed_media_type IS NOT NULL AND verified_at IS NOT NULL AND object_version IS NOT NULL)",
+            name="ck_media_objects_verified_fields",
+        ),
+        CheckConstraint("phase NOT IN ('assembled', 'verified') OR object_version IS NOT NULL",
+                        name="ck_media_objects_exact_version_required"),
+        CheckConstraint("phase <> 'deleted' OR deleted_at IS NOT NULL", name="ck_media_objects_deleted_time"),
+        Index("ix_media_objects_phase_updated", "phase", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    site_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    upload_session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    provider_profile: Mapped[str] = mapped_column(String(64), nullable=False)
+    bucket: Mapped[str] = mapped_column(String(128), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    provider_upload_id: Mapped[str | None] = mapped_column(String(512))
+    object_version: Mapped[str | None] = mapped_column(String(512))
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, default="reserved")
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    observed_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    observed_sha256: Mapped[str | None] = mapped_column(String(64))
+    observed_media_type: Mapped[str | None] = mapped_column(String(128))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_signed_write_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assembled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class UploadPart(Base):
+    __tablename__ = "upload_parts"
+    __table_args__ = (
+        UniqueConstraint("upload_session_id", "part_number", name="uq_upload_parts_number"),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id", "asset_id", "upload_session_id"],
+            ["upload_sessions.tenant_id", "upload_sessions.site_id", "upload_sessions.session_id",
+             "upload_sessions.asset_id", "upload_sessions.id"],
+            ondelete="RESTRICT", name="fk_upload_parts_upload_scope",
+        ),
+        CheckConstraint("part_number BETWEEN 1 AND 10000", name="ck_upload_parts_number"),
+        CheckConstraint("expected_size_bytes > 0", name="ck_upload_parts_expected_size"),
+        CheckConstraint("actual_size_bytes IS NULL OR actual_size_bytes > 0", name="ck_upload_parts_actual_size"),
+        CheckConstraint("state IN ('registered', 'confirmed', 'stale')", name="ck_upload_parts_state"),
+        CheckConstraint(
+            "(state = 'registered' AND etag IS NULL AND actual_size_bytes IS NULL AND confirmed_at IS NULL) OR "
+            "(state IN ('confirmed', 'stale') AND etag IS NOT NULL AND actual_size_bytes IS NOT NULL "
+            "AND confirmed_at IS NOT NULL)", name="ck_upload_parts_confirmation_fields",
+        ),
+        CheckConstraint("etag IS NULL OR length(etag) BETWEEN 1 AND 512", name="ck_upload_parts_etag_length"),
+        Index("ix_upload_parts_scope_state", "tenant_id", "site_id", "upload_session_id", "state", "part_number"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    site_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    upload_session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    part_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="registered")
+    etag: Mapped[str | None] = mapped_column(String(512))
+    actual_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    request_hash: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class MediaJob(Base):
+    __tablename__ = "media_jobs"
+    __table_args__ = (
+        UniqueConstraint("object_id", "kind", name="uq_media_jobs_object_kind"),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id", "asset_id", "object_id"],
+            ["media_objects.tenant_id", "media_objects.site_id", "media_objects.session_id",
+             "media_objects.asset_id", "media_objects.id"],
+            ondelete="RESTRICT", name="fk_media_jobs_object_scope",
+        ),
+        ForeignKeyConstraint(["accepted_user_id"], ["users.id"], ondelete="RESTRICT",
+                             name="fk_media_jobs_accepted_user"),
+        # Deliberately not an FK: logout must be able to delete this auth session and
+        # thereby invalidate a pending completion before its final ready commit.
+        ForeignKeyConstraint(["tenant_id", "site_id", "accepted_edge_node_id"],
+                             ["edge_nodes.tenant_id", "edge_nodes.site_id", "edge_nodes.id"],
+                             ondelete="RESTRICT", name="fk_media_jobs_edge_node_scope"),
+        ForeignKeyConstraint(["tenant_id", "site_id", "accepted_edge_node_id", "accepted_credential_id"],
+                             ["edge_credentials.tenant_id", "edge_credentials.site_id",
+                              "edge_credentials.edge_node_id", "edge_credentials.id"],
+                             ondelete="RESTRICT", name="fk_media_jobs_credential_scope"),
+        CheckConstraint("kind IN ('initialize', 'complete', 'cleanup')", name="ck_media_jobs_kind"),
+        CheckConstraint("state IN ('queued', 'running', 'retry_wait', 'succeeded', 'failed')", name="ck_media_jobs_state"),
+        CheckConstraint("attempts >= 0 AND generation >= 1", name="ck_media_jobs_attempts_generation"),
+        CheckConstraint(
+            "(state = 'running' AND lease_token IS NOT NULL AND lease_until IS NOT NULL) OR "
+            "(state <> 'running' AND lease_token IS NULL AND lease_until IS NULL)",
+            name="ck_media_jobs_lease_pair",
+        ),
+        CheckConstraint(
+            "(kind = 'complete' AND ((accepted_actor_kind = 'user' AND accepted_user_id IS NOT NULL "
+            "AND accepted_auth_session_hash IS NOT NULL AND accepted_edge_node_id IS NULL "
+            "AND accepted_credential_id IS NULL) OR (accepted_actor_kind = 'edge_node' "
+            "AND accepted_user_id IS NULL AND accepted_auth_session_hash IS NULL "
+            "AND accepted_edge_node_id IS NOT NULL AND accepted_credential_id IS NOT NULL))) OR "
+            "(kind <> 'complete' AND accepted_actor_kind IS NULL AND accepted_user_id IS NULL "
+            "AND accepted_auth_session_hash IS NULL AND accepted_edge_node_id IS NULL "
+            "AND accepted_credential_id IS NULL)", name="ck_media_jobs_accepted_actor",
+        ),
+        Index("ix_media_jobs_state_next_lease", "state", "next_attempt_at", "lease_until"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    site_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    accepted_actor_kind: Mapped[str | None] = mapped_column(String(16))
+    accepted_user_id: Mapped[str | None] = mapped_column(String(36))
+    accepted_auth_session_hash: Mapped[str | None] = mapped_column(String(64))
+    accepted_edge_node_id: Mapped[str | None] = mapped_column(String(36))
+    accepted_credential_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class MediaCleanupCandidate(Base):
+    __tablename__ = "media_cleanup_candidates"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_media_cleanup_identity_hash"),
+        ForeignKeyConstraint(["tenant_id", "site_id"], ["sites.tenant_id", "sites.id"],
+                             ondelete="RESTRICT", name="fk_media_cleanup_site_scope"),
+        ForeignKeyConstraint(["tenant_id", "site_id", "object_id"],
+                             ["media_objects.tenant_id", "media_objects.site_id", "media_objects.id"],
+                             ondelete="RESTRICT", name="fk_media_cleanup_object_scope"),
+        CheckConstraint("kind IN ('multipart', 'object')", name="ck_media_cleanup_kind"),
+        CheckConstraint("state IN ('observed', 'queued', 'running', 'retry_wait', 'deleted', 'failed', 'manual')",
+                        name="ck_media_cleanup_state"),
+        CheckConstraint("attempts >= 0 AND generation >= 1", name="ck_media_cleanup_attempts_generation"),
+        CheckConstraint("last_seen_at >= first_seen_at AND not_before >= first_seen_at",
+                        name="ck_media_cleanup_observation_order"),
+        CheckConstraint(
+            "(state = 'running' AND lease_token IS NOT NULL AND lease_until IS NOT NULL) OR "
+            "(state <> 'running' AND lease_token IS NULL AND lease_until IS NULL)",
+            name="ck_media_cleanup_lease_pair",
+        ),
+        CheckConstraint("(object_id IS NULL) = (session_id IS NULL AND asset_id IS NULL)",
+                        name="ck_media_cleanup_object_scope_pair"),
+        Index("ix_media_cleanup_state_deadline", "state", "not_before", "next_attempt_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    site_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    object_id: Mapped[str | None] = mapped_column(String(36))
+    session_id: Mapped[str | None] = mapped_column(String(36))
+    asset_id: Mapped[str | None] = mapped_column(String(36))
+    provider_profile: Mapped[str] = mapped_column(String(64), nullable=False)
+    bucket: Mapped[str] = mapped_column(String(128), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    upload_id: Mapped[str | None] = mapped_column(String(512))
+    object_version: Mapped[str | None] = mapped_column(String(512))
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="observed")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 

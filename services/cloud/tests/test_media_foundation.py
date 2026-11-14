@@ -2,6 +2,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from swimplatform.models import UploadSession
 
 SHA = "a" * 64
 META = {"device_time_basis": "unknown", "video_timebase_kind": "relative", "device_clock_source": "unknown"}
@@ -196,6 +197,26 @@ def test_upload_session_read_and_abort_pair_asset_failure(client, seeded_account
     assert still["updated_at"] == terminal["updated_at"]
 
 
+def test_abort_can_terminate_a_completing_upload(client, app, seeded_account):
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+    created = create_intent(client, org, session["id"]).json()
+    upload_id = created["upload_session"]["id"]
+    with app.state.sessions() as db:
+        upload = db.get(UploadSession, upload_id)
+        upload.status = "completing"
+        upload.complete_manifest_hash = "b" * 64
+        upload.complete_requested_at = datetime.now(UTC)
+        db.commit()
+
+    aborted = client.post(org["base"] + f"/upload-sessions/{upload_id}/abort", headers=org["ch"])
+    assert aborted.status_code == 204
+    terminal = client.get(org["base"] + f"/upload-sessions/{upload_id}", headers=org["ch"]).json()
+    asset = client.get(org["base"] + f"/video-assets/{created['asset']['id']}", headers=org["ch"]).json()
+    assert (terminal["status"], terminal["failure_reason"]) == ("aborted", "upload_aborted")
+    assert (asset["status"], asset["failure_reason"]) == ("failed", "upload_aborted")
+
+
 def test_expiry_is_materialized_by_server_clock(client, app, seeded_account):
     org = setup_org(client, seeded_account)
     session = new_session(client, org)
@@ -239,6 +260,133 @@ def test_cancelled_session_rejects_intent_and_closes_unfinished_uploads(client, 
     rejected = create_intent(client, org, session["id"], key="after-cancel-1")
     assert rejected.status_code == 409
     assert rejected.json()["detail"]["code"] == "state_conflict"
+
+
+def test_cancelled_session_replays_original_intent_before_new_intent_checks(client, seeded_account):
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+    created = create_intent(client, org, session["id"], key="cancel-replay-001").json()
+    client.patch(
+        org["base"] + f"/training-sessions/{session['id']}", headers=org["ch"],
+        json={"status": "cancelled"},
+    )
+    first_terminal = client.get(
+        org["base"] + f"/upload-sessions/{created['upload_session']['id']}", headers=org["ch"]
+    ).json()
+
+    replay = create_intent(client, org, session["id"], key="cancel-replay-001")
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["asset"]["id"] == created["asset"]["id"]
+    assert replay.json()["upload_session"]["id"] == created["upload_session"]["id"]
+    assert replay.json()["upload_session"]["status"] == "failed"
+    assert replay.json()["upload_session"]["failure_reason"] == "session_cancelled"
+    assert replay.json()["asset"]["failure_reason"] == "session_cancelled"
+
+    conflict = create_intent(
+        client, org, session["id"], key="cancel-replay-001", expected_size_bytes=4096
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "idempotency_conflict"
+    assert create_intent(client, org, session["id"], key="cancel-replay-new").status_code == 409
+    after = client.get(
+        org["base"] + f"/upload-sessions/{created['upload_session']['id']}", headers=org["ch"]
+    ).json()
+    assert after["updated_at"] == first_terminal["updated_at"]
+    assert after["failure_reason"] == first_terminal["failure_reason"] == "session_cancelled"
+
+
+def test_intent_replay_still_requires_current_user_resource_permission(client, seeded_account):
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+    created = create_intent(client, org, session["id"], key="permission-replay-01")
+    assert created.status_code == 201
+
+    # Keep the site membership so only the current tenant role changes.
+    changed = client.patch(
+        f"/api/v1/tenants/{org['tenant']['id']}/members/{org['coach']['id']}",
+        headers=org["oh"], json={"role": "athlete"},
+    )
+    assert changed.status_code == 200, changed.text
+    replay = create_intent(client, org, session["id"], key="permission-replay-01")
+    assert replay.status_code == 404
+    assert replay.json()["detail"]["code"] == "training_session_not_found"
+
+
+def test_historical_intent_size_is_parsed_and_replayed_before_new_limit(client, app, seeded_account):
+    from sqlalchemy import select
+    from swimplatform.edge_registry import request_digest
+    from swimplatform.models import IdempotencyRecord, UploadSession, VideoAsset
+    from swimplatform.schemas import UploadIntentCreate
+
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+    created = create_intent(client, org, session["id"], key="legacy-large-001").json()
+    large_size = 2 * 1024**3 + 1
+    # The input model keeps M2's broad parsing range. A pre-existing record can therefore
+    # be replayed with its historic declaration before the new-create policy is evaluated.
+    large_payload = UploadIntentCreate.model_validate(intent_body(expected_size_bytes=large_size))
+    assert large_payload.expected_size_bytes == large_size
+    with app.state.sessions() as db:
+        record = db.scalar(select(IdempotencyRecord).where(
+            IdempotencyRecord.operation == "upload_intent.create",
+            IdempotencyRecord.target_id == session["id"],
+        ))
+        upload = db.get(UploadSession, created["upload_session"]["id"])
+        asset = db.get(VideoAsset, created["asset"]["id"])
+        record.request_hash = request_digest(large_payload)
+        upload.expected_size_bytes = large_size
+        asset.size_bytes = large_size
+        db.commit()
+
+    replay = create_intent(
+        client, org, session["id"], key="legacy-large-001", expected_size_bytes=large_size
+    )
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["upload_session"]["id"] == created["upload_session"]["id"]
+    assert replay.json()["upload_session"]["expected_size_bytes"] == large_size
+    assert create_intent(
+        client, org, session["id"], key="legacy-large-new", expected_size_bytes=large_size
+    ).status_code == 422
+
+
+def test_historical_large_intent_physical_prepare_conflicts_before_provider_io(
+    client, app, seeded_account
+):
+    from dataclasses import replace
+    from sqlalchemy import select
+    from swimplatform.models import MediaJob, MediaObject
+
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+    created = create_intent(client, org, session["id"], key="legacy-large-prepare-01").json()
+    upload_id = created["upload_session"]["id"]
+    with app.state.sessions() as db:
+        stored = db.get(UploadSession, upload_id)
+        stored.expected_size_bytes = 2 * 1024**3 + 1
+        db.commit()
+
+    class NoIOProvider:
+        profile = "s3"
+        bucket = "must-not-be-used"
+
+        def __getattr__(self, name):
+            raise AssertionError(f"provider I/O started before legacy size rejection: {name}")
+
+    original_settings, original_provider = app.state.settings, app.state.storage_provider
+    app.state.settings = replace(original_settings, media_enabled=True)
+    app.state.storage_provider = NoIOProvider()
+    try:
+        response = client.post(
+            org["base"] + f"/upload-sessions/{upload_id}/part-urls",
+            headers=org["ch"], json={"part_numbers": [1]},
+        )
+    finally:
+        app.state.settings, app.state.storage_provider = original_settings, original_provider
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "transfer_policy_conflict"
+    with app.state.sessions() as db:
+        assert db.scalar(select(MediaObject).where(MediaObject.upload_session_id == upload_id)) is None
+        assert db.scalars(select(MediaJob).where(MediaJob.kind == "initialize")).all() == []
 
 
 def test_completed_session_accepts_make_up_upload_without_rollback(client, seeded_account):
@@ -307,7 +455,58 @@ def test_raw_device_time_is_preserved_verbatim(client, seeded_account):
     assert asset["checksum_sha256"] is None
 
 
-def test_no_completion_or_playback_operation_is_exposed(client, seeded_account):
+@pytest.mark.parametrize(
+    "basis,extra,raw_start,raw_end",
+    [
+        ("utc", {}, "  camera utc start  ", " camera utc end "),
+        ("offset", {"device_utc_offset_minutes": 480}, " camera offset start ", "camera offset end  "),
+        ("iana_timezone", {"device_timezone": "Asia/Shanghai"}, "  camera iana start", "camera iana end  "),
+    ],
+)
+def test_valid_capture_time_bases_round_trip_through_asset_api(
+    client, app, seeded_account, basis, extra, raw_start, raw_end,
+):
+    org = setup_org(client, seeded_account)
+    session = new_session(client, org)
+    metadata = {
+        "device_time_basis": basis,
+        **extra,
+        "capture_started_at_utc": "2026-11-13T01:00:00Z",
+        "capture_ended_at_utc": "2026-11-13T01:30:00Z",
+        "device_capture_started_at_raw": raw_start,
+        "device_capture_ended_at_raw": raw_end,
+        "video_timebase_kind": "wall_clock",
+        "device_clock_source": "ntp",
+    }
+    body = intent_body(capture_metadata=metadata)
+    created = client.post(
+        org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+        headers={**org["ch"], "Idempotency-Key": f"time-{basis}-001"}, json=body,
+    )
+    assert created.status_code == 201, created.text
+    asset_id = created.json()["asset"]["id"]
+    read = client.get(org["base"] + f"/video-assets/{asset_id}", headers=org["ch"])
+    assert read.status_code == 200
+    asset = read.json()
+    assert asset["device_time_basis"] == basis
+    assert asset["device_capture_started_at_raw"] == raw_start
+    assert asset["device_capture_ended_at_raw"] == raw_end
+    assert asset["device_clock_source"] == "ntp"
+    assert asset["capture_started_at_utc"].startswith("2026-11-13T01:00:00")
+    assert asset["capture_ended_at_utc"].startswith("2026-11-13T01:30:00")
+    assert asset["received_at"] != asset["capture_started_at_utc"]
+
+    ordinary = new_session(client, org, key=f"trim-{basis}-001")
+    # SessionCreate trims ordinary title input while raw capture strings above remain unchanged.
+    title_patch = client.patch(
+        org["base"] + f"/training-sessions/{ordinary['id']}", headers=org["ch"],
+        json={"title": "  Ordinary title  "},
+    )
+    assert title_patch.status_code == 200
+    assert title_patch.json()["title"] == "Ordinary title"
+
+
+def test_m3_transfer_operations_are_exposed_but_disabled_without_storage_profile(client, seeded_account):
     org = setup_org(client, seeded_account)
     session = new_session(client, org)
     created = create_intent(client, org, session["id"]).json()
@@ -315,11 +514,16 @@ def test_no_completion_or_playback_operation_is_exposed(client, seeded_account):
     asset_id = created["asset"]["id"]
 
     assert client.post(
-        org["base"] + f"/upload-sessions/{upload_id}/complete", headers=org["ch"]
-    ).status_code == 404
+        org["base"] + f"/upload-sessions/{upload_id}/complete",
+        headers={**org["ch"], "Idempotency-Key": "m3-disabled-profile"},
+        json={"parts": [{"part_number": 1, "etag": '"etag"'}]},
+    ).status_code == 503
     assert client.post(
         org["base"] + f"/video-assets/{asset_id}/playback-url", headers=org["ch"]
-    ).status_code == 404
+    ).status_code == 503
+    assert client.post(
+        org["base"] + f"/video-assets/{asset_id}/download-url", headers=org["ch"]
+    ).status_code == 503
 
     asset = client.get(org["base"] + f"/video-assets/{asset_id}", headers=org["ch"]).json()
     assert asset["status"] in {"pending_upload", "failed"}

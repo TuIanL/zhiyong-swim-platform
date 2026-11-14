@@ -27,12 +27,12 @@
 - **THEN** 恢复流程 MUST 追踪或回收本次作用域的多余物理句柄，只保留一个被选定的传输绑定，Asset 与 UploadSession ID MUST 不变
 
 #### Scenario: Existing intent exceeds transfer policy
-- **WHEN** M2 已有未终结意图超出当前已批准的传输大小策略
-- **THEN** 准备 MUST 返回 409 `transfer_policy_conflict` 而不删改历史声明；读取、中止和过期仍可用；新增意图不符合已批准策略时 MUST 返回 422
+- **WHEN** 当前身份与资源权限有效，调用者读取、重放、中止或申请准备一个声明大小超过2 GiB的 M2 历史意图
+- **THEN** 服务 MUST 先完成身份、资源权限和既有幂等记录查找；读取/同键同参重放/中止/过期 MUST 继续使用历史原值，物理准备 MUST 返回409 `transfer_policy_conflict`；不得在 Pydantic 解析前因新建策略返回422或修改原声明。真正新建的超限意图才 MUST 返回422
 
 ### Requirement: Bounded multipart layout and part credentials
 
-服务 SHALL 根据声明总大小与已批准配置固定分片布局；编号 MUST 从 1 连续覆盖对象，除末片外大小固定，末片按剩余字节确定，范围与数量 MUST 同时满足服务策略和 provider 限制。分片 URL MUST 仅允许目标上传的指定 part 动作，不能合并、读取或删除对象，也不能延长 UploadSession。
+新建意图的最大对象大小 MUST 为2 GiB，固定分片大小 MUST 为16 MiB；服务 SHALL 根据声明总大小固定分片布局，编号从1连续覆盖对象，除末片外大小固定，末片按剩余字节确定。每次最多签发100个 part URL，单个 Part URL TTL MUST 不超过300秒且不得超过上传剩余期限或签发者身份有效期。访问 URL 默认60秒且硬上限300秒。范围与数量还 MUST 满足 provider 限制。分片 URL MUST 仅允许目标上传的指定 part 动作，不能合并、读取或删除对象，也不能延长 UploadSession；M2历史意图保留原有24小时默认/7天上限。
 
 #### Scenario: Invalid part request
 - **WHEN** 请求含重复、零、负数、越界编号，过多编号或不符合布局的大小
@@ -75,8 +75,16 @@ complete SHALL 要求 Idempotency-Key 与完整、有序、无重复的分片清
 - **THEN** 服务 MUST 持久提交 completing、清单摘要及可恢复工作后返回 202，响应包含原 asset/upload ID 和轮询位置，不得此时声明 ready
 
 #### Scenario: Repeat complete during and after verification
-- **WHEN** 相同清单在 completing 期间或 completed 后重复提交
-- **THEN** 前者 MUST 返回 202 且不产生第二次业务完成，后者 MUST 返回 200 与同一 completed/ready 结果；不同清单 MUST 返回 409，失败终态 MUST 不被复活
+- **WHEN** 原发起主体对相同 Idempotency-Key 与相同 manifest，在 UploadSession 分别处于 `completing`、`completed/ready` 或 `failed/expired/aborted` 时重试
+- **THEN** `completing` MUST 返回202并继续原工作、不创建第二工作；`completed/ready` MUST 返回200当前完成结果；失败终态 MUST 返回409 `upload_not_completable`并诊断原状态及原 failure_reason，不重排工作、不改写终态
+
+#### Scenario: Complete key conflicts with another manifest
+- **WHEN** 同一主体/作用域/Idempotency-Key 提交与该 key 已持久化摘要不同的 manifest，包括上传已经进入任一终态
+- **THEN** 服务 MUST 返回409 `idempotency_conflict`，且该键对应的原 manifest、原工作和终态 MUST 不改变
+
+#### Scenario: Different key cannot create a second completion job
+- **WHEN** 相同 UploadSession 已有 accepted manifest 或 complete 工作，调用者以不同 key 提交相同或不同 manifest
+- **THEN** 相同 manifest MUST 返回同一业务完成状态且不能创建第二合并/校验工作；不同 manifest MUST 返回409 `upload_not_completable`并且不得替换已接受 manifest
 
 #### Scenario: Incomplete or reordered manifest
 - **WHEN** complete 含缺失分片、重复编号、非法顺序或未确认分片
@@ -84,7 +92,7 @@ complete SHALL 要求 Idempotency-Key 与完整、有序、无重复的分片清
 
 ### Requirement: Whole object bytes determine verification
 
-服务 SHALL 从绑定的不可变完整对象或精确版本读取所有字节，独立计算实际大小与整对象 SHA-256，探测真实媒体类型并按批准的类型策略检查声明。HEAD、客户端 checksum、ETag、分片回执或 multipart 合并成功 MUST NOT 替代该校验；验证与最终访问 MUST 指向同一对象身份。
+服务 SHALL 从绑定的不可变完整对象或精确版本读取所有字节，独立计算实际大小与整对象 SHA-256，并使用固定版本、禁用网络访问且有界文件/时间/CPU/内存/磁盘/输出资源的 ffprobe 探测媒体。首版仅接受探测通过的 MP4 容器；具体声明类型必须与真实探测结果相符，不得转码。HEAD、客户端 checksum、ETag、分片回执或 multipart 合并成功 MUST NOT 替代该校验；验证与最终访问 MUST 指向同一对象身份。
 
 #### Scenario: Matching object
 - **WHEN** 合并后的全部字节、SHA-256 和真实媒体类型均符合声明及媒体策略
@@ -100,7 +108,11 @@ complete SHALL 要求 Idempotency-Key 与完整、有序、无重复的分片清
 
 ### Requirement: Final verification commits both terminal states
 
-只有整对象验证成功且当前 Session 未取消、上传未过期/终结、工作代际仍有效、物理对象未进入清理时，系统 SHALL 在同一数据库事务提交 UploadSession.completed 与 VideoAsset.ready 及验证值/引用。任一写入或提交失败 MUST 不出现单侧终态，重试 MUST 返回唯一已提交结果。
+只有整对象验证成功，并在最终短事务中重新核验当前主体权限、请求接受时的原用户会话或 Edge Credential 仍有效、用户账号 active、Node/Device 状态有效、Session 未取消、UploadSession 仍 completing 且未过期、工作代际有效、精确物理对象未进入清理时，系统 SHALL 在同一数据库事务提交 UploadSession.completed 与 VideoAsset.ready 及验证值/引用。权限或身份在长校验期间失效 MUST 配对 `failed/upload_failed`、保留脱敏审计原因并登记清理，不得 ready。User 的 accepted auth-session hash 是无外键的不可逆快照；用户退出 MUST 能删除 AuthSession，且不得被待处理媒体作业阻止；最终 worker 必须因原 AuthSession 缺失而拒绝 ready。任一写入或提交失败 MUST 不出现单侧终态，重试 MUST 返回唯一已提交结果。
+
+#### Scenario: Logout invalidates a pending completion without being blocked
+- **WHEN** User complete 已被接受，原 User 在 worker 最终提交前成功退出
+- **THEN** logout MUST 删除原 AuthSession 并返回成功；worker MUST 配对 `failed/upload_failed`，且不得提交 ready
 
 #### Scenario: Final transaction fails
 - **WHEN** 写 UploadSession、Asset 或物理引用时注入失败
@@ -153,6 +165,8 @@ Cancel、Abort、Expiry 与完整验证最终提交 SHALL 按同一 scoped 并�
 ### Requirement: Expiry and cleanup are retryable and scoped
 
 清扫 SHALL 可重试地终结过期 uploading/completing，并回收本作用域未完成 multipart 与失败残留。每次删除前 MUST 核对精确物理身份、全部有效逻辑引用、当前终态与仍可能写入的签名窗口；范围不明、provider 权限/网络错误或删除未确认 MUST 留待重试并报告失败，不能默认 absent。
+
+常规技术残留清理 MUST 默认 dry-run。自动物理删除只可用于已逐项核验属于本次可销毁隔离测试环境的精确资源；ready 视频、Edge 本地原始视频、未确认来源的对象不得自动删除。
 
 #### Scenario: Failed cleanup is visible
 - **WHEN** abort/delete/删除后 HEAD 检查遇到权限、daemon/网络类错误或对象仍存在

@@ -7,7 +7,9 @@
 
 默认集合只跑 SQLite，不改变日常 `python -m pytest` 语义。
 """
+import os
 import secrets
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -51,6 +53,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "postgresql: 只在专用可销毁 PostgreSQL 实例上运行的用例"
     )
+    config.addinivalue_line(
+        "markers", "storage: 需要本次 RustFS 隔离测试 profile 的真实对象存储用例"
+    )
     if config.getoption("--cloud-backend") == "postgresql":
         # 环境不完整时必须整体失败，不能静默跳过或回退 SQLite。
         from pg_support import PgEnvironment
@@ -70,6 +75,9 @@ def pytest_collection_modifyitems(config, items):
         categories = config.stash.setdefault(PG_CATEGORIES, {})
         skip = pytest.mark.skip(reason="SQLite 专属用例不在 PostgreSQL 后端运行")
         for item in items:
+            if item.get_closest_marker("storage"):
+                item.add_marker(pytest.mark.skip(reason="真实 RustFS 集成在独立隔离存储 job 运行"))
+                continue
             if item.get_closest_marker("sqlite"):
                 item.add_marker(skip)
             else:
@@ -77,9 +85,12 @@ def pytest_collection_modifyitems(config, items):
                 categories[item.nodeid] = "postgresql" if item.get_closest_marker("postgresql") else "shared"
         return
     skip = pytest.mark.skip(reason="需要 --cloud-backend=postgresql 与专用可销毁实例")
+    skip_storage = pytest.mark.skip(reason="需要本次 RustFS 隔离存储 job")
     for item in items:
         if item.get_closest_marker("postgresql"):
             item.add_marker(skip)
+        if item.get_closest_marker("storage") and os.getenv("SWIM_MEDIA_ENVIRONMENT") != "isolated-test":
+            item.add_marker(skip_storage)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -163,10 +174,10 @@ def app(request, cloud_backend):
         # 无任何外部连接回退；每项测试使用 pytest 独立临时库并真实执行迁移。
         url = f"sqlite:///{request.getfixturevalue('tmp_path') / 'isolated.sqlite3'}"
         migrate_database(url)
-        application = create_app(Settings(database_url=url))
+        application = create_app(replace(Settings.from_environment(), database_url=url))
     else:
         database = request.getfixturevalue("pg_databases")()
-        application = create_app(Settings(database_url=database.app_url))
+        application = create_app(replace(Settings.from_environment(), database_url=database.app_url))
     yield application
     application.state.engine.dispose()
 

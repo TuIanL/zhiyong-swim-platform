@@ -1,10 +1,10 @@
 # Tasks
 
-本轮仅 Propose，以下 **42 项实施任务均未执行**。规划产物done、strict或历史CI通过不算Apply完成。引用 [Design](design.md) D22–D31与Q1–Q8，以及[规格增量](specs/)；每组包含自身需要的测试与文档，不把缺失的单项验证推到最终集成。
+本 Change 已获 Apply 授权，以下 42 项在当前实施分支跟踪。规划产物、strict 或历史 CI 通过不算业务 Apply 完成。引用 [Design](design.md) D22–D31与已确认的开发/CI决策，以及[规格增量](specs/)；每组包含自身需要的测试与文档，不把缺失的单项验证推到最终集成。
 
 ## 1. 审阅输入与 M2 WARNING 收口
 
-- [ ] 1.1 在收到明确Apply授权后核对最新main/本Change/原任务，记录Q1开发与真实集成profile、Q3容量/分片候选和Q4格式/失权策略的负责人结论；未确认不得按候选实施。证据：Change内决策记录能逐项关联负责人原文与参数，生产产品/区域/隐私保留仍明确未冻结，Notion属性不擅改。
+- [x] 1.1 核对最新 main、PR #6、本 Change、M2 Verify 与 Notion 原任务；在 Design 决策表记录负责人授权的 Q1–Q8 开发/CI 选择，明确生产政策仍未冻结。证据：Design 冻结 RustFS 1.0.5-glibc amd64 镜像 digest、boto3 1.44.3、容量/分片/URL 参数、MP4/ffprobe、最终身份校验与 dry-run 边界；原 Notion 任务状态、负责人、日期不变。
 - [ ] 1.2 修复W1：User/Edge意图在当前身份/资源能力核验后、cancelled新建检查前查主体域幂等；同参重放原终态、异参409幂等冲突、新键cancelled409。证据：两后端共享API测试覆盖取消前后响应丢失/重试、两个ID与原因/首次时间不变、撤权/过期token拒绝，契约补录检查次序。
 - [ ] 1.3 补W2相同SHA独立采集回归：两合法Device/不同键/同大小摘要，各保留不同asset/upload ID、来源与采集时间；独立人工导入也不合并。证据：两后端共享API断言，后续5.3验证后仍独立；领域文档明确请求幂等与物理内容不同。
 - [ ] 1.4 补W3两类grant审计回归：Owner@T1 PUT、Admin@T2 PUT、Owner@T3 DELETE、Admin@T4 DELETE。证据：两后端读取持久字段逐项断言首次granted_at/by、revoked_at/by不变，仅期限可更新，仍一条有效授权；RBAC契约记录该保证。
@@ -19,9 +19,9 @@
 
 ## 3. Storage Provider Adapter 与隔离集成设施
 
-- [ ] 3.1 实现统一协议及首个经批准profile适配器，封装SDK、分页、错误归一与必要capabilities；路由不依赖厂商SDK。证据：Adapter契约测试和包安装测试，锁定依赖/许可与真实服务版本/镜像digest，文档说明已测与未测产品。
+- [ ] 3.1 实现统一协议及 S3 Adapter，SDK 固定 boto3 1.44.3，真实测试 profile 固定 RustFS 1.0.5-glibc linux/amd64 digest `sha256:f36a122c886d99206df9a1dc1efcc96543db3ae206718e0527509dbf1b27c662`（Apache-2.0）。证据：Adapter/能力契约测试、分页和错误归一、包安装测试；只说明该隔离 profile 的已测能力，不声明生产选型或对其他产品兼容。
 - [ ] 3.2 实现服务端对象命名、私有ACL/精确版本绑定、归属元数据与Secret配置门禁；不得接受客户端key/endpoint/桶。证据：注入路径/跨scope/缺失版本能力拒绝、签名日志脱敏测试与配置说明；无静态公开旁路。
-- [ ] 3.3 建立可销毁真实存储测试编排，核验本次实例ID/名称/owner+run labels/回环端口、专用bucket/namespace，忽略外部媒体配置，成功失败均精确清理。证据：归属伪造在连接前拒绝、启动超时非零、删除失败/daemon错误非零、无全局prune；恢复runbook与编排实测一致。
+- [ ] 3.3 建立可销毁 RustFS 测试编排，核验本次容器 ID/名称/owner+run labels/回环端口、专用 bucket/namespace，忽略外部媒体配置，成功失败均精确清理。证据：伪造归属在 S3 请求前拒绝、启动超时非零、删除失败/daemon错误非零、无全局 prune；恢复 runbook 与编排实测一致。
 - [ ] 3.4 在真实服务验证create/list全分页/sign/complete/HEAD/read/abort/delete，覆盖200内嵌错误、NoSuchUpload歧义和网络/权限错误。证据：真实I/O结果与故障注入分开记录，明确fake只用于受控故障，不能替代传输集成验收。
 
 ## 4. 分片、确认与恢复接口
@@ -42,10 +42,10 @@
 
 ## 6. 状态机与真实 PostgreSQL 并发
 
-- [ ] 6.1 统一cancel/abort/expiry/读时物化/complete最终提交的Session→Upload→Asset→Object锁顺序；completing也可中止/过期，首次终态不可改。证据：共享状态矩阵含恰好expires_at与completed后中止/取消，原M2终态回归仍通过；状态机文档更新。
+- [ ] 6.1 统一 M2 Session Cancel、Upload GET/Abort/Expiry 与 M3 Prepare/Complete/Finalize/Cleanup 的 `Session → UploadSession → Asset → media_objects → media_jobs/parts/cleanup` 锁顺序；不得反向持锁等待或在事务锁内等待外部存储 I/O。completing 也可中止/过期，首次终态不可改。证据：SQLite/PG共享状态矩阵含恰好 expires_at 与 completed 后中止/取消；PG真实并发按6.2–6.3验证。
 - [ ] 6.2 用两个业务连接与独立监控连接受控运行Cancel vs finalize、Abort vs finalize、Expiry vs finalize各两方向。证据：JUnit含互异PID、实际wait_event_type=Lock/pg_blocking_pids、有界等待，胜方终态/原因/时间与两侧原子性断言，不以单连接/随机sleep作证。
 - [ ] 6.3 验证重复complete/分片确认、并发准备/租约接管/旧worker提交与GC vs finalize的合法单赢家。证据：真实PG独立PID、锁或CAS代际/rowcount、唯一记录与无死锁断言；SQL锁不跨外部长I/O的并发取消用例。
-- [ ] 6.4 覆盖当前授权变化与存储I/O期间Node/Device停用、用户角色/场馆移除、接受凭据过期/撤销。证据：最终提交按已批准Q4失败配对或保留已先完成结果，后续身份请求拒绝，不能由已排队工作或旧幂等键越权。
+- [ ] 6.4 覆盖当前授权变化与存储 I/O 期间 Node/Device 停用、用户角色/场馆移除、接受用户会话/Edge Credential 到期或撤销。证据：最终提交按已批准严格语义配对 `failed/upload_failed` 或保留已先完成结果；专项合法上传测试在校验期间使原身份到期，最终不得 ready；之后身份请求拒绝，不能由已排队工作或旧幂等键越权。
 
 ## 7. 播放与下载访问
 
@@ -74,9 +74,10 @@
 - [ ] 10.3 在本Change内产出Apply证据记录，区分历史/本机/CI、SQLite/PG/真实存储、故障注入/真实传输，并列出未验证的生产/隐私/M4限制。证据：W1–W4有真实测试落点才标关闭，S1若未处理继续保留，不改M2历史报告/28任务。
 - [ ] 10.4 提交到同一工作分支与Draft PR，确认最终CI绑定最新head，向工程入口/分片原任务及相关原任务追加真实交付回链。证据：无重复任务、无无关属性变更，PR仍Draft，等待单独Verify授权，未自动归档/同步主规格/合并。
 
-## Workflow follow-up
+## Apply follow-up
 
-- 本轮仅Propose：0/42，发布Draft PR并记录实际结构/链接检查，不执行上述实施任务。
-- Q1/Q3/Q4等待负责人审阅；收到新的明确Apply授权后，按确认范围推进同一Change，不能把参数答复本身当Apply。
-- 独立Verify、Archive、主规格同步、PR Ready与Merge分别遵循后续授权；没有任何一项由本清单完成自动触发。
-- Q2生产政策、Q8后续模块与M4完整同步系统不并入本Change，不创建重叠Change或重复Notion任务。
+- 当前执行同一 Change 的 42 项 Apply；原编号不重排、不创建重叠 Change。逐项完成代码/测试/文档证据后才勾选。
+- RustFS 测试 profile 与 boto3 版本只属于开发/隔离 CI；生产政策和生产存储仍待负责人决策。
+- SQLite、PostgreSQL、真实存储集成及 CI 均须绑定最终实际代码 Head；缺少必要服务或证据的场景不得记为通过。
+- 独立 Verify、Archive、主规格同步、PR Ready、Merge 和生产部署仍分别等待后续授权。
+- Q2 未冻结政策与 Q8 明确排除项、M4完整同步系统不并入本 Change；不创建重复 Notion 任务。

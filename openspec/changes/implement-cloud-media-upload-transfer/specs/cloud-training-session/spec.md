@@ -25,6 +25,14 @@
 - **WHEN** 当前仍有权的原用户或节点以同主体/作用域/键及相同摘要重试取消前已经创建的意图
 - **THEN** 服务 MUST 返回原 Asset/UploadSession 的当前终态且不新增记录；同键异参 MUST 返回幂等冲突，不能先因 Session cancelled 掩盖该结果
 
+#### Scenario: Replay does not bypass current identity or resource permission
+- **WHEN** 用户已失去当前 Session 的读取/管理能力，或 Edge Credential 已撤销/过期后使用旧幂等键重试
+- **THEN** 服务 MUST 先拒绝当前身份或资源权限，再查找/返回幂等结果；历史键不得绕过实时撤权
+
+#### Scenario: Upload operations follow the parent-first lock order
+- **WHEN** GET、Abort、Expiry 或后续媒体操作需要锁定一个 UploadSession
+- **THEN** 服务 MUST 先以无锁 scoped 读取发现父键，按 `Session → UploadSession` 顺序加锁并在锁后重读；任何请求不得先锁 UploadSession 再等待其 Session
+
 #### Scenario: Cancel races with verification final commit
 - **WHEN** Session cancel 与完整对象验证最终提交通过独立事务并发
 - **THEN** 取消先提交 MUST 使 uploading/completing 与对应 pending Asset 同事务失败，验证先最终提交 MUST 保留 completed/ready；complete 接受为 completing 本身不得阻止取消
