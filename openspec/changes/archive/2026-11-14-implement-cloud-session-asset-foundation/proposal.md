@@ -2,7 +2,7 @@
 
 ## Why
 
-main 已有账号/机构/场馆与 Cloud Edge Registry 共10张业务表、21 paths / 31 operations，但[已批准的采集媒体契约](../../../docs/contracts/cloud-capture-media.md)中 TrainingSession、VideoAsset、UploadSession 与资源读取授权仍「无表无接口」。平台现在能登记设备和凭据，却没有任何训练业务记录、没有视频逻辑资产、也无法回答「哪位教练可以看哪次训练」。M2 必须先把业务资源与资源级读取授权做实，才能让 M3 的二进制上传、校验与播放有合法落点；不允许先开放无授权的媒体壳，也不允许先造人工专用来源模型再重写。
+main 已有账号/机构/场馆与 Cloud Edge Registry 共10张业务表、21 paths / 31 operations，但[已批准的采集媒体契约](../../../../docs/contracts/cloud-capture-media.md)中 TrainingSession、VideoAsset、UploadSession 与资源读取授权仍「无表无接口」。平台现在能登记设备和凭据，却没有任何训练业务记录、没有视频逻辑资产、也无法回答「哪位教练可以看哪次训练」。M2 必须先把业务资源与资源级读取授权做实，才能让 M3 的二进制上传、校验与播放有合法落点；不允许先开放无授权的媒体壳，也不允许先造人工专用来源模型再重写。
 
 ## What Changes
 
@@ -37,7 +37,7 @@ main 已有账号/机构/场馆与 Cloud Edge Registry 共10张业务表、21 pa
 
 ## Impact
 
-- 事实基线 main@57e91a5（PR #4 合并）。输入为 [ADR 0003](../../../docs/decisions/0003-capture-media-domain-contracts.md) D1–D10、[领域模型](../../../docs/architecture/cloud-capture-media-domain.md)、[API 契约](../../../docs/contracts/cloud-capture-media.md)、[Cloud Edge Registry 模型](../../../docs/architecture/cloud-edge-registry-domain.md)与 [P0/P1 路线](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)；这些是已评审方向，不是已实现事实。
+- 事实基线 main@57e91a5（PR #4 合并）。输入为 [ADR 0003](../../../../docs/decisions/0003-capture-media-domain-contracts.md) D1–D10、[领域模型](../../../../docs/architecture/cloud-capture-media-domain.md)、[API 契约](../../../../docs/contracts/cloud-capture-media.md)、[Cloud Edge Registry 模型](../../../../docs/architecture/cloud-edge-registry-domain.md)与 [P0/P1 路线](../../../../docs/planning/2026-11-10-p0-p1-roadmap.md)；这些是已评审方向，不是已实现事实。
 - Apply 将触及 `services/cloud` 的模型 / 新增迁移 `0003` / 路由与输入输出 / 两后端测试 / OpenAPI 快照 / 领域与契约文档；复用现有 identity、membership、manager、site_access、Edge 凭据认证与幂等工具，不复制注册或跨目录 import。
 - **迁移风险**：`idempotency_records` 现有 `operation` / `resource_kind` CHECK 与 `(tenant_id, site_id, user_id, operation, target_id, key_hash)` 唯一约束需扩展为按主体（user / edge_node）区分；SQLite 需 batch 重建该表，PostgreSQL 需替换约束与索引。既有 User 主体幂等数据必须无损迁移（回填 `actor_kind='user'`，保留原始键摘要、参数摘要与资源引用），降级遇到 Edge 主体或新 operation 记录时必须显式失败而不是静默丢数据。既有12个 Registry 操作与19个基础操作的回归断言不得修改或删除。
 - 测试基线从「六表 + 四表」变为15表批准集合；`pg_support.APPROVED_APP_TABLES`、`test_postgresql_schema`、`test_postgresql_identity` 的固定集合需同步扩展，并用未批准 canary 表证明授权未放宽。

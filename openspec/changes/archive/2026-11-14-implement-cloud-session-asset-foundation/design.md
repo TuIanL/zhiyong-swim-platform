@@ -2,14 +2,14 @@
 
 ## Context
 
-动机与拟实施范围见 [proposal](proposal.md)。设计输入是已评审的 [ADR 0003](../../../docs/decisions/0003-capture-media-domain-contracts.md) D1–D10、[领域模型](../../../docs/architecture/cloud-capture-media-domain.md)、[API 契约](../../../docs/contracts/cloud-capture-media.md)、已实现的 [Cloud Edge Registry](../archive/2026-11-11-implement-cloud-edge-device-foundation/design.md) 与本轮 [P0/P1 路线](../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。这些是方向，不是已实现事实。
+动机与拟实施范围见 [proposal](proposal.md)。设计输入是已评审的 [ADR 0003](../../../../docs/decisions/0003-capture-media-domain-contracts.md) D1–D10、[领域模型](../../../../docs/architecture/cloud-capture-media-domain.md)、[API 契约](../../../../docs/contracts/cloud-capture-media.md)、已实现的 [Cloud Edge Registry](../2026-11-11-implement-cloud-edge-device-foundation/design.md) 与本轮 [P0/P1 路线](../../../../docs/planning/2026-11-10-p0-p1-roadmap.md)。这些是方向，不是已实现事实。
 
 main@57e91a5 的真实基线：10 张业务表、21 paths / 31 operations。可复用的实现事实：
 
-- [api.py](../../../services/cloud/src/swimplatform/api.py) 提供 `identity`、`membership`（非成员 404）、`manager`（角色不足 403）、`site_access`（owner/admin 免显式 SiteMembership）与 `as_utc` 瞬间归一；`fail()` 统一 `detail.code/message`。
-- [edge_registry.py](../../../services/cloud/src/swimplatform/edge_registry.py) 提供 `get_edge_identity`、`lock_node`/`lock_manager_node`（PG 行锁、SQLite 条件写）、`commit_idempotently`、`idempotency_key_digest`、`request_digest` 与 `server_now` 时钟缝。
-- [models.py](../../../services/cloud/src/swimplatform/models.py) 已有复合 `UNIQUE (tenant_id, site_id, id)` 与 `ForeignKeyConstraint` 的 RESTRICT 模式；[迁移 0002](../../../services/cloud/src/swimplatform/migrations/versions/20261110_0002_cloud_edge_registry.py) 展示增量迁移与列约束命名。
-- 测试侧 [pg_support.py](../../../services/cloud/tests/pg_support.py) 的 `APPROVED_APP_TABLES` 是10张的显式集合，[test_postgresql_schema.py](../../../services/cloud/tests/test_postgresql_schema.py) 用 `TABLES | REGISTRY_TABLES` 断言表集合，[test_postgresql_identity.py](../../../services/cloud/tests/test_postgresql_identity.py) 用 `len(APPROVED_APP_TABLES)+1` 断言授权行数。新增表必须显式扩展这些集合，不能改成 `ALL TABLES`。
+- [api.py](../../../../services/cloud/src/swimplatform/api.py) 提供 `identity`、`membership`（非成员 404）、`manager`（角色不足 403）、`site_access`（owner/admin 免显式 SiteMembership）与 `as_utc` 瞬间归一；`fail()` 统一 `detail.code/message`。
+- [edge_registry.py](../../../../services/cloud/src/swimplatform/edge_registry.py) 提供 `get_edge_identity`、`lock_node`/`lock_manager_node`（PG 行锁、SQLite 条件写）、`commit_idempotently`、`idempotency_key_digest`、`request_digest` 与 `server_now` 时钟缝。
+- [models.py](../../../../services/cloud/src/swimplatform/models.py) 已有复合 `UNIQUE (tenant_id, site_id, id)` 与 `ForeignKeyConstraint` 的 RESTRICT 模式；[迁移 0002](../../../../services/cloud/src/swimplatform/migrations/versions/20261110_0002_cloud_edge_registry.py) 展示增量迁移与列约束命名。
+- 测试侧 [pg_support.py](../../../../services/cloud/tests/pg_support.py) 的 `APPROVED_APP_TABLES` 是10张的显式集合，[test_postgresql_schema.py](../../../../services/cloud/tests/test_postgresql_schema.py) 用 `TABLES | REGISTRY_TABLES` 断言表集合，[test_postgresql_identity.py](../../../../services/cloud/tests/test_postgresql_identity.py) 用 `len(APPROVED_APP_TABLES)+1` 断言授权行数。新增表必须显式扩展这些集合，不能改成 `ALL TABLES`。
 
 ### 已实现事实与待设计实体的分界
 
@@ -117,7 +117,7 @@ Owner/Admin 不依赖 `site_memberships`；其范围是「当前 tenant 内全�
 - 因为每个 pending 资产恰有一条上传会话（`upload_sessions.asset_id` 唯一），两条 UPDATE 覆盖的是同一批业务对象；取消场景下原因统一为 `session_cancelled`，不会出现两侧原因不一致。
 - 取消与中止并发：两者都对同一行做条件更新，只有一个事务的行数不为 0；落败方重新读取并返回已提交终态。取消先赢则该上传会话原因为 `session_cancelled`，中止先赢则原因为 `upload_aborted`，后到的取消不再改写原因。
 - **取消后新建上传意图返回 409 `state_conflict`**（cancelled 是终态，禁止再产生媒体记录）。
-- **completed Session 允许补传**：符合权限、来源与其余业务约束的上传意图照常创建（201），Session 状态保持 completed、`completed_at` 不被重写。这与[已批准媒体契约](../../../docs/contracts/cloud-capture-media.md) §5「completed Session 可以接收规则允许的补传但不能回退状态」一致，本片不新增限制。
+- **completed Session 允许补传**：符合权限、来源与其余业务约束的上传意图照常创建（201），Session 状态保持 completed、`completed_at` 不被重写。这与[已批准媒体契约](../../../../docs/contracts/cloud-capture-media.md) §5「completed Session 可以接收规则允许的补传但不能回退状态」一致，本片不新增限制。
 - 补传仍要求 S-manage（用户路径）或有效节点凭据与 active device（Edge 路径），并受 D21 采集时间校验约束；补传产生的资产与普通意图一样处于 `pending_upload`，M2 内不产生 ready。
 
 ### D19 上传意图：原子创建、失败原因词表、懒物化过期

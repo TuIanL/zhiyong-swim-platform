@@ -2,7 +2,7 @@
 
 本清单 28 项已于 2026-11-12 全数完成并勾选。Q10–Q13 已由负责人 2026-11-12 审阅确认（受授人仅 coach、Edge 意图留 M2、服务端 24h/7d 且客户端不可指定、接受 M2 无 ready），P1-1—P1-4 已并入下列任务。
 
-实施 head `1476f9847410c4e14526e08f2395a3f4ef6928f7`；本机 SQLite 232 tests / 0 failures / 59 skipped；CI push run [43243735161](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243735161) 与 pull_request run [43243723165](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243723165) 的 `test` 与 `PostgreSQL 17 validation` 全部 success。逐项证据见[实施与验证报告](../../../docs/verification/cloud-session-asset-foundation-apply.md)。
+实施 head `1476f9847410c4e14526e08f2395a3f4ef6928f7`；本机 SQLite 232 tests / 0 failures / 59 skipped；CI push run [43243735161](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243735161) 与 pull_request run [43243723165](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43243723165) 的 `test` 与 `PostgreSQL 17 validation` 全部 success。逐项证据见[实施与验证报告](../../../../docs/verification/cloud-session-asset-foundation-apply.md)。
 
 ## 1. 迁移与物理模型
 
@@ -29,9 +29,9 @@
 ## 3. 契约与文档
 
 - [x] 3.1 重新生成 OpenAPI 快照并核对 33 paths / 47 operations，既有 31 个操作的路径、字段、错误不变。验证：快照与运行时 `openapi()` 逐路径比对通过
-- [x] 3.2 更新[领域模型文档](../../../docs/architecture/cloud-capture-media-domain.md)：五张表标为已实现，UploadSession 标注「意图已实现、传输未实现」，派生创建与存储引用保持未实现。验证：文档「已实现/未实现」两栏与迁移和路由一致
-- [x] 3.3 更新[API 契约文档](../../../docs/contracts/cloud-capture-media.md)：16 个操作标为已实现，part-urls/complete/playback-url 5 个标为 M3 未实现。验证：路径清单与 OpenAPI 快照一一对应
-- [x] 3.4 在 [RBAC 契约](../../../docs/contracts/cloud-rbac.md) 增补 S-read / S-manage / A-read 矩阵、非管理路径的当前 coach 角色要求、403/404 分界与「场馆授权不等于资源授权」。验证：矩阵每一格都能指向至少一条测试
+- [x] 3.2 更新[领域模型文档](../../../../docs/architecture/cloud-capture-media-domain.md)：五张表标为已实现，UploadSession 标注「意图已实现、传输未实现」，派生创建与存储引用保持未实现。验证：文档「已实现/未实现」两栏与迁移和路由一致
+- [x] 3.3 更新[API 契约文档](../../../../docs/contracts/cloud-capture-media.md)：16 个操作标为已实现，part-urls/complete/playback-url 5 个标为 M3 未实现。验证：路径清单与 OpenAPI 快照一一对应
+- [x] 3.4 在 [RBAC 契约](../../../../docs/contracts/cloud-rbac.md) 增补 S-read / S-manage / A-read 矩阵、非管理路径的当前 coach 角色要求、403/404 分界与「场馆授权不等于资源授权」。验证：矩阵每一格都能指向至少一条测试
 - [x] 3.5 在本 Change 内记录 M2/M3 边界、本片偏差清单与审阅修订记录（已实现 16 / M3 5 / 不实现项；P1-1—P1-4 落点）。验证：清单与 design 的偏差表、修订记录逐项一致
 
 ## 4. PostgreSQL 专属验收
