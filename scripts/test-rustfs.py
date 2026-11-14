@@ -65,7 +65,8 @@ def remove_exact(container_id: str, *, run_id: str, name: str, image_id: str) ->
     except LookupError:
         return "absent"
     validate_container(container, run_id=run_id, name=name, image_id=image_id)
-    docker("rm", "--force", "--volumes", "--time", "10", container_id)
+    docker("stop", "--time", "10", container_id)
+    docker("rm", "--force", "--volumes", container_id)
     try:
         inspect_exact(container_id)
     except LookupError:

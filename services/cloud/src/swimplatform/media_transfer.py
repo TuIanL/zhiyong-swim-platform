@@ -765,7 +765,8 @@ def _confirm_part(*, db: Session, request: Request, provider: StorageProvider,
     part = db.scalar(select(UploadPart).where(UploadPart.tenant_id == tenant_id,
                                             UploadPart.site_id == site_id,
                                             UploadPart.upload_session_id == upload_id,
-                                            UploadPart.part_number == part_number))
+                                            UploadPart.part_number == part_number)
+                     .execution_options(populate_existing=True))
     if not part:
         db.rollback()
         fail(409, "part_not_confirmed", "该分片尚未签发")
@@ -805,7 +806,8 @@ def _confirm_part(*, db: Session, request: Request, provider: StorageProvider,
     part = db.scalar(select(UploadPart).where(UploadPart.tenant_id == tenant_id,
                                             UploadPart.site_id == site_id,
                                             UploadPart.upload_session_id == upload_id,
-                                            UploadPart.part_number == part_number))
+                                            UploadPart.part_number == part_number)
+                     .execution_options(populate_existing=True))
     if not part:
         db.rollback()
         fail(409, "part_conflict", "分片布局已经变化")

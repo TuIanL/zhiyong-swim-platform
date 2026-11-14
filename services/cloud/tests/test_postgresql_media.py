@@ -619,7 +619,7 @@ def test_expiry_first_blocks_abort_from_rewriting_reason(
 ):
     database = pg_databases()
     application, engine = _pooled_app(database)
-    race = ControlledRace(application, UPLOAD_LOCK, pg_environment, database.name)
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
     try:
         with TestClient(application) as client:
             org = seed_scope(client, lambda name: seeded_account(name, application=application))
