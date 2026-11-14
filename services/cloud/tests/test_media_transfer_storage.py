@@ -292,7 +292,8 @@ def test_rustfs_full_upload_resume_complete_private_range_and_cleanup(client, se
     assert client.post(expiring_url, headers=expiring_key, json=expiring_body).status_code == 202
     with app.state.sessions() as db:
         stored = db.get(UploadSession, expiring_upload["id"])
-        stored.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        stored.created_at = datetime.now(UTC) - timedelta(minutes=30)
+        stored.expires_at = stored.created_at + timedelta(minutes=1)
         db.commit()
     expired = client.post(expiring_url, headers=expiring_key, json=expiring_body)
     assert expired.status_code == 409
