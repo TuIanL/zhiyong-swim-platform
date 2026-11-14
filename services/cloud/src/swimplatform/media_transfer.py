@@ -1186,7 +1186,7 @@ def process_media_job(session_factory, provider: StorageProvider, settings, *, n
         return False
     try:
         if snapshot["kind"] == "initialize":
-            _process_initialize(session_factory, provider, snapshot, now)
+            _process_initialize(session_factory, provider, settings, snapshot, now)
         elif snapshot["kind"] == "complete":
             _process_complete(session_factory, provider, settings, snapshot, now)
         else:
@@ -1197,7 +1197,7 @@ def process_media_job(session_factory, provider: StorageProvider, settings, *, n
     return True
 
 
-def _process_initialize(session_factory, provider: StorageProvider, snapshot: dict, now: datetime):
+def _process_initialize(session_factory, provider: StorageProvider, settings, snapshot: dict, now: datetime):
     provider.check_capabilities()
     with session_factory() as db:
         locked = _lock_transfer(db, snapshot["tenant_id"], snapshot["site_id"], _job_upload_id(db, snapshot))

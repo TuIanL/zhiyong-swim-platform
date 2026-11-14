@@ -857,13 +857,19 @@ def test_orphan_discovery_paginates_observes_twice_and_deletes_only_verified_fai
             org["base"] + f"/upload-sessions/{upload['id']}/abort", headers=org["ch"]
         )
         assert aborted.status_code == 204
-        key = _object_key(upload["tenant_id"], upload["site_id"], upload["session_id"],
-                          asset["id"], upload["id"], 1, app.state.settings.media_run_id)
+        with app.state.sessions() as db:
+            persisted_upload = db.get(UploadSession, upload["id"])
+            assert persisted_upload is not None
+            tenant_id, site_id, session_id = (
+                persisted_upload.tenant_id, persisted_upload.site_id, persisted_upload.session_id
+            )
+        key = _object_key(tenant_id, site_id, session_id, asset["id"], upload["id"],
+                          1, app.state.settings.media_run_id)
         put = provider.client.put_object(
             Bucket=provider.bucket, Key=key, Body=b"orphan-version",
             Metadata={"owner": "swim-platform", "purpose": "isolated-media-transfer",
-                      "run-id": app.state.settings.media_run_id, "tenant-id": upload["tenant_id"],
-                      "site-id": upload["site_id"], "session-id": upload["session_id"],
+                      "run-id": app.state.settings.media_run_id, "tenant-id": tenant_id,
+                      "site-id": site_id, "session-id": session_id,
                       "asset-id": asset["id"], "upload-session-id": upload["id"]},
         )
         assert put.get("VersionId")
