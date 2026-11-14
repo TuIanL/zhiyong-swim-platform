@@ -100,7 +100,7 @@ def private_probe(client, endpoint: str, bucket: str, run_id: str) -> None:
             raise HarnessError("private capability probe object remained after deletion")
 
 
-def create_bucket(client, bucket: str, endpoint: str):
+def create_bucket(client, bucket: str, endpoint: str, run_id: str):
     deadline = time.monotonic() + 60
     last_error = None
     while time.monotonic() < deadline:
@@ -123,7 +123,7 @@ def create_bucket(client, bucket: str, endpoint: str):
     versioning = client.get_bucket_versioning(Bucket=bucket).get("Status")
     if versioning != "Enabled":
         raise HarnessError("bucket versioning capability was not enabled")
-    private_probe(client, endpoint, bucket, os.environ["SWIM_MEDIA_RUN_ID"])
+    private_probe(client, endpoint, bucket, run_id)
 
 
 def main() -> int:
@@ -195,7 +195,7 @@ def main() -> int:
                           connect_timeout=3, read_timeout=10,
                           retries={"max_attempts": 1, "mode": "standard"}),
         )
-        create_bucket(client, bucket, endpoint)
+        create_bucket(client, bucket, endpoint, run_id)
         evidence.update({"endpoint_host": host, "endpoint_port": int(port_number),
                          "versioning": "Enabled", "private_probe": "denied"})
         env = os.environ.copy()
