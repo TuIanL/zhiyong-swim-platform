@@ -131,7 +131,7 @@ def test_application_cannot_write_migration_version_table(pg_environment, pg_dat
     with app_connection(pg_environment, database) as connection:
         with denied(connection, statement):
             pass
-        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261110_0002"
+        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261112_0003"
 
 
 @pytest.mark.parametrize(
@@ -160,7 +160,7 @@ def test_application_can_use_business_tables_and_read_version(pg_environment, pg
         connection.execute("UPDATE users SET display_name = 'U2' WHERE id = 'u-1'")
         connection.commit()
         assert scalar(connection, "SELECT display_name FROM users WHERE id = 'u-1'") == "U2"
-        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261110_0002"
+        assert scalar(connection, "SELECT version_num FROM alembic_version") == "20261112_0003"
         connection.execute("DELETE FROM users WHERE id = 'u-1'")
         connection.commit()
         assert scalar(connection, "SELECT count(*) FROM users") == 0

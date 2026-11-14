@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 TABLES = {
     "users", "auth_sessions", "tenants", "tenant_memberships", "sites", "site_memberships",
     "edge_nodes", "devices", "edge_credentials", "idempotency_records",
+    "training_sessions", "video_assets", "upload_sessions", "session_read_grants", "asset_read_grants",
 }
 
 

@@ -43,6 +43,7 @@ APP_USER = "swim_app"
 APPROVED_APP_TABLES = (
     "users", "auth_sessions", "tenants", "tenant_memberships", "sites", "site_memberships",
     "edge_nodes", "devices", "edge_credentials", "idempotency_records",
+    "training_sessions", "video_assets", "upload_sessions", "session_read_grants", "asset_read_grants",
 )
 
 # 连接池配置按用途分开：顺序复用与真实并发不能共用同一组参数。

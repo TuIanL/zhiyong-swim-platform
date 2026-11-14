@@ -21,9 +21,11 @@ from pg_support import SCHEMA
 pytestmark = pytest.mark.postgresql
 
 BASE_REVISION = "20261106_0001"
-REVISION = "20261110_0002"
+REVISION = "20261112_0003"
+REGISTRY_REVISION = "20261110_0002"
 TABLES = {"users", "auth_sessions", "tenants", "tenant_memberships", "sites", "site_memberships"}
 REGISTRY_TABLES = {"edge_nodes", "devices", "edge_credentials", "idempotency_records"}
+MEDIA_TABLES = {"training_sessions", "video_assets", "upload_sessions", "session_read_grants", "asset_read_grants"}
 
 
 def alembic_config(url: str) -> Config:
@@ -62,7 +64,7 @@ def test_revision_and_version_table_live_in_dedicated_schema(pg_databases):
                     "SELECT table_schema FROM information_schema.tables "
                     "WHERE table_name = ANY(:names)"
                 ),
-                {"names": sorted(TABLES | REGISTRY_TABLES | {"alembic_version"})},
+                {"names": sorted(TABLES | REGISTRY_TABLES | MEDIA_TABLES | {"alembic_version"})},
             ).scalars().all()
             assert set(locations) == {SCHEMA}
             public_tables = connection.execute(
@@ -78,7 +80,7 @@ def test_six_tables_columns_and_nullability(pg_databases):
     engine = create_engine(database.migration_url)
     try:
         inspector = inspect(engine)
-        assert TABLES | REGISTRY_TABLES | {"alembic_version"} == set(inspector.get_table_names())
+        assert TABLES | REGISTRY_TABLES | MEDIA_TABLES | {"alembic_version"} == set(inspector.get_table_names())
 
         expected = {
             "users": [
@@ -220,7 +222,7 @@ def test_incremental_revision_preserves_base_data_and_can_downgrade_to_base(pg_d
 
     migrate_database(database.migration_url)
     pg_environment.grant_application(database)
-    assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
+    assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | MEDIA_TABLES | {"alembic_version"}
     head_engine = create_engine(database.app_url)
     try:
         with head_engine.connect() as connection:
@@ -378,7 +380,7 @@ def test_downgrade_and_upgrade_roundtrip(pg_databases, pg_environment):
     migrate_database(database.migration_url)
     # 迁移脚本不管理对象权限：重建表后必须重新授权，这一点在验证报告中如实记录。
     pg_environment.grant_application(database)
-    assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
+    assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | MEDIA_TABLES | {"alembic_version"}
 
     application = create_app(Settings(database_url=database.app_url))
     try:
@@ -423,7 +425,7 @@ def test_interrupted_migration_rolls_back_ddl_and_version(pg_databases):
 
         # 移除冲突对象后可以正常升级，说明失败没有留下不可恢复状态。
         migrate_database(database.migration_url)
-        assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
+        assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | MEDIA_TABLES | {"alembic_version"}
     finally:
         admin_engine.dispose()
 
@@ -450,7 +452,7 @@ def test_interrupted_registry_migration_rolls_back_new_ddl_and_keeps_base_revisi
         with admin_engine.begin() as connection:
             connection.execute(text("DROP TABLE swim_cloud.devices"))
         migrate_database(database.migration_url)
-        assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | {"alembic_version"}
+        assert table_names(database.migration_url) == TABLES | REGISTRY_TABLES | MEDIA_TABLES | {"alembic_version"}
     finally:
         admin_engine.dispose()
 

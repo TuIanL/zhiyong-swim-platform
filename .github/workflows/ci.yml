@@ -27,6 +27,10 @@ jobs:
       # 必需场景零收集、被 skip、共享 API 用例未执行或环境失败都会使本步骤非零退出。
       - name: Run shared and PostgreSQL specific tests
         run: python scripts/test-postgresql.py
+      # 失败时把具体场景名与断言消息提升为 check 注解，便于直接定位。
+      - name: Report failing PostgreSQL scenarios
+        if: failure()
+        run: python scripts/report-pg-failures.py || true
       # always 兜底：只按本次 run id 精确删除，不做全局 prune。
       - name: Cleanup dedicated instance
         if: always()

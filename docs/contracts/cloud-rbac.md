@@ -128,3 +128,41 @@ coach与athlete使用相同的非管理角色分支，但已有场景主要创�
 - RLS 未实施，本节所有“隔离”结论均为应用层授权与连接上下文，不是数据库行级安全。
 - 撤销权限与并发写入同时发生的竞态、跨机构并发更新、连接池饱和行为未验证。
 - 平台管理员、所有权转移、通用审计日志、Edge Runtime与媒体仍未实现；Cloud Edge Registry已有独立Owner/Admin登记权限和仅限本节点heartbeat的Edge身份，详见[Registry契约](cloud-edge-registry.md)。
+
+## 训练会话与视频资产：S-read / S-manage / A-read（M2 已实现）
+
+本节记录 2026-11-12 Apply 的 `implement-cloud-session-asset-foundation` 实际行为，代码见 [media_access.py](../../services/cloud/src/swimplatform/media_access.py) 与 [media.py](../../services/cloud/src/swimplatform/media.py)。
+
+三项能力由**同一个谓词构造器**产出，列表、详情、Session 资产子列表与游标续页共用；非 Owner/Admin 路径**在每个请求上**重新判定当前角色，不使用登录快照，也不因为曾经授予过 grant 而永久放行。
+
+| 能力 | 判定（`u` 为调用者） |
+| --- | --- |
+| S-read | `role ∈ {owner, admin}`；或 `role = coach ∧ 机构成员 ∧ 该 Site 访问 ∧ (session.created_by_user_id = u ∨ 有效 SessionReadGrant)` |
+| S-manage | `role ∈ {owner, admin}`；或 `role = coach ∧ session.created_by_user_id = u ∧ 机构成员 ∧ 该 Site 访问` |
+| A-read | `role ∈ {owner, admin}`；或 `role = coach ∧ 机构成员 ∧ 该 Site 访问 ∧ (asset.created_by_user_id = u ∨ 有效 AssetReadGrant ∨ 对该 Asset 的父 Session 有 S-read)` |
+
+`有效 grant` = `revoked_at IS NULL ∧ (expires_at IS NULL ∨ expires_at > 服务端当前时刻)`。
+
+| 操作 | 要求 | 失败语义 |
+| --- | --- | --- |
+| 列/读 Session、Session 资产子列表 | S-read（子列表再逐资产按 A-read 过滤） | 不可见一律 404 |
+| 创建 Session | Owner/Admin，或该 Site 的 coach | 角色不足 403；非成员/错场馆 404 |
+| PATCH Session（title/status） | S-manage | 可读但不可管理 403；不可读 404 |
+| 读/播放签发（播放属 M3） | A-read | 404 |
+| 创建上传意图 | 用户路径 S-manage；Edge 路径为节点凭据 + 同节点、同场馆、active 设备 | 403 / 404 / 409（cancelled、设备停用） |
+| 授予/撤销 grant | 本机构 Owner/Admin | coach 调用 403；受授人非本机构 404；非 coach 或无该场馆访问 422 `grantee_not_eligible` |
+
+授权记录：`session_read_grants` / `asset_read_grants` 采用软撤销（`revoked_at` + `revoked_by_user_id`，成对约束），部分唯一索引 `WHERE revoked_at IS NULL` 保证「同一资源对同一受授人只有一条有效授权」；`PUT` 为 upsert 并保留首次 `granted_at`/`granted_by_user_id`，重复撤销不覆盖首次执行者与时间。
+
+| 行为 | 已实现语义 |
+| --- | --- |
+| Session grant 覆盖范围 | 该 Session 当前与之后新增的**全部** Asset（按父 Session 在每次读取时判定），不授予管理、上传或转授权 |
+| 单 Asset grant | 只覆盖目标 Asset，不开放父 Session 详情、子列表或其他资产 |
+| 撤权保留其他路径 | 撤销一条路径后，创建者身份、另一项有效 grant、Owner/Admin 机构范围继续生效 |
+| 角色/成员/场馆失效 | 即便 grant 未到期也立即停止放行；grant 记录不被级联删除 |
+| 分页 | 先按资源谓词过滤再形成页与 `next_cursor`；无 `total_count`；续页重新校验，旧游标不能绕过撤权 |
+
+### 本节仍未覆盖
+
+- 学员（athlete）读取路径、教练—学员关系与监护人同意未实现；本片 athlete 既不能作为受授人，也不能经资源授权读取。
+- 平台角色、RLS、通用审计事件表、播放 URL 签发与端到端媒体链未实现（播放属 M3）。
