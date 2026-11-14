@@ -73,3 +73,36 @@
 
 - 未执行独立 Verify、Archive、主规格同步、Ready for review、Merge。
 - 原 Apply 报告与 28/28 任务历史未修改；本文件只追加初审修复记录。
+
+## 8. 2026-11-14 定向修订记录（追加，不改写历史）
+
+- 修订前 PR head：`0a959881b1a82e13c9edb4f9fc6a1c658ba6fc63`。
+- 本轮代码/测试 head：`2f7ba0ace603ea90423247aa203a27c23b8017b5`。
+- 只修改 `services/cloud/tests/test_postgresql_media.py` 与 `services/cloud/tests/test_media_migration_guards.py`；没有改业务代码、迁移、OpenAPI、主规格或 28/28 Apply 任务。
+
+### Abort-before-expiry 顺序
+
+将错误的 `test_abort_first_then_read_keeps_aborted_terminal` 改为 `test_abort_before_expiry_remains_terminal_after_clock_advance`。测试现在先创建正常意图，再把服务端时钟置于 `expires_at` 前一秒，Abort 返回 204 并提交；随后确认 UploadSession=`aborted/upload_aborted`、VideoAsset=`failed/upload_aborted`，记录双方 `updated_at`。再推进到 `expires_at` 后一秒执行 GET，确认读取仍返回 aborted，数据库状态、原因及两行 `updated_at` 均与首次终态一致，且没有 `expired` / `upload_expired`。原有 `test_expiry_first_blocks_abort_from_rewriting_reason` 保留，继续验证过期先物化的相反顺序。
+
+### ControlledRace 的锁等待证据
+
+此前 `before_cursor_execute` 事件仅能证明第二个请求到达同一锁 SQL 的执行入口，不能独立证明 PostgreSQL 已进入锁等待。当前 `ControlledRace` 保留该事件作为请求到达信号，并新增一条独立管理员监控连接：在最多 10 秒内轮询第二个业务 backend 的 `pg_stat_activity.wait_event_type`、`wait_event` 和 `pg_blocking_pids(pid)`；只有确认等待类型为 `Lock` 且 blocker 列表包含第一业务 backend 才放行。监控会话先设置 1 秒 `statement_timeout`。第一、第二业务 PID 与监控连接 PID 分别记录为 JUnit properties，断言互不相同；放行后要求两个请求线程均完成。超时或监控缺少锁等待证据会使测试失败，不会回退成“仅到达 SQL 入口即算阻塞”。
+
+### SQLite 迁移期间外键实测更正
+
+原第 5 节称显式事务期间 `PRAGMA foreign_keys` 不生效；该风险描述经本轮实测确认错误，本追加记录予以更正，原历史段落保留以显示修订轨迹。新增 `test_sqlite_foreign_keys_stay_enabled_during_explicit_migration`，通过测试事件钩子在 Alembic 实际使用的同一 SQLite DBAPI 连接上观测：`PRAGMA foreign_keys=ON` 后、物理 `BEGIN` 已生效期间、迁移完成并关闭连接前，值均为 `1`。在迁移事务内用保存点执行一条引用不存在 Tenant/Site/User 的 `training_sessions` 写入，SQLite 抛出外键违规并拒绝该写入；保存点回滚后迁移继续成功。`env.py` 顺序与实现正确，本轮未修改迁移代码；之前报告中“迁移窗口外键未强制”的风险应视为已撤回。
+
+### 本轮完整回归与证据
+
+| 检查 | 结果 |
+| --- | --- |
+| 完整 SQLite（本机，隔离 venv） | **179 passed / 64 skipped / 0 failed / 0 errors**；64 项为 PostgreSQL 专属场景。另有 162 条现存 SQLite datetime adapter 弃用警告。 |
+| PostgreSQL 17 完整套件，代码 head `2f7ba0a` | [GitHub Actions run 43530913894](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43530913894)：`test` 与 `PostgreSQL 17 validation` 均 success；PG JUnit 摘要 `shared=176 / postgresql=64`、**240 passed / 3 skipped / 0 failed**、1 条 Starlette/AnyIO 弃用警告。 |
+| PostgreSQL 容器归属与清理 | run `43530913894` 摘要：run id `7f1c581ab589a250`、`result=passed`、`cleanup=removed`；CI always-cleanup 复查为 `absent`、`exit_code=0`。 [PG 证据包](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43530913894/artifacts/14087207642)含 JUnit、运行摘要和实例日志。 |
+| OpenSpec Change strict / 主规格 strict | 分别 1/1、2/2 passed；Change Apply 仍为 28/28，任务文件未修改。 |
+| OpenAPI 快照 | 运行时 schema 与 `docs/contracts/openapi.json` 完全相等：33 paths / 47 operations。 |
+| Markdown 相对链接 / `git diff --check` | 58 份已跟踪 Markdown、258 个相对链接检查，0 断链；`git diff --check` 通过。未跟踪 `.workbuddy/`、`docs/workflow/` 保持原状。 |
+
+CI 运行 `43530913894` 对应的是上述代码 head。随后仅追加本节报告并生成报告提交；该最终 PR head 的 `test` 和 `PostgreSQL 17 validation` 会再次运行，最终状态与链接同步到 PR #5 和 Notion 工程入口。完整回归仍绑定 PR head，不能用历史 CI 替代。
+
+本轮没有执行独立 Verify、Archive、主规格同步、Ready for review 或 Merge。PR #5 保持 Draft；main 保持 `57e91a571cb4ced56f1c92f9c2b01400b01647bf`。
