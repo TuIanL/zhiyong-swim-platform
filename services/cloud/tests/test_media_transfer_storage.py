@@ -981,8 +981,13 @@ def test_rustfs_user_and_edge_resume_original_layout_after_config_reload(
 
     def run_actor(kind: str):
         app.state.settings = replace(app.state.settings, media_part_size_bytes=PART_BYTES)
+        def actor_account(name, **kwargs):
+            # The fixture database is shared by both halves of this integration
+            # test, so give the User and Edge scenarios distinct stable emails.
+            return seeded_account(f"rustfs-layout-{kind}-{name}", **kwargs)
+
         if kind == "user":
-            org = setup_org(client, seeded_account)
+            org = setup_org(client, actor_account)
             session = new_session(client, org, key="rustfs-layout-user-session")
             created = create_intent(
                 client, org, session["id"], key="rustfs-layout-user-intent",
@@ -997,7 +1002,7 @@ def test_rustfs_user_and_edge_resume_original_layout_after_config_reload(
             complete_url = org["base"] + f"/upload-sessions/{upload['id']}/complete"
             status_url = org["base"] + f"/upload-sessions/{upload['id']}"
         else:
-            org = build_edge_org(client, seeded_account)
+            org = build_edge_org(client, actor_account)
             node, token = activate_node(client, org["oh"], org["base"], key="rustfs-layout-edge-node")
             device = make_device(client, org["oh"], org["base"], node["id"], key="rustfs-layout-edge-device")
             session = new_edge_session(client, org, key="rustfs-layout-edge-session")
