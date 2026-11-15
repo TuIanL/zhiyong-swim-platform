@@ -54,7 +54,7 @@ RustFS 15 个通过的存储场景包括完整上传/断点恢复/私有 Range�
 | --- | --- | --- | --- |
 | V1 URL TTL | 登录 AuthSession 剩约 10 秒；有效永久 SessionReadGrant；读取 TTL=60 秒。分别请求 playback-url 与 download-url，均返回 200，expires_at - now = 60s，provider 收到 TTL=60。另测 30 秒有效 Session grant、永久但已撤销 Asset grant，结果为 30 秒。 | 所发 URL TTL 必须不超过当前登录会话与实际授权路径剩余期限。 | **Fail / CRITICAL**：永久 grant 分支把 deadlines=[]，一并丢弃 AuthSession deadline；有限 grant 与 revoked grant 分支符合预期。 |
 | V2 Ready 物理版本丢失 | DB 中置 ready Asset 与 verified 精确 version，但 provider stub 无对象并且没有 head/get 存在性方法；播放及下载路由均返回 200 并调用 signer。独立 CI RustFS 没有先删除 exact ready version 再请求的用例；本机 Docker daemon 不可用，未执行真实 RustFS 物理缺失场景。 | 物理精确版本不能确认存在时返回 503 media_unavailable，不返回 URL、不改签最新版本、不改写 ready 历史。 | **Not verified / WARNING**：API 路由当前只检查 DB 绑定对象；S3 signer 只生成 presigned URL。真实物理缺失后的 API 状态仍缺实证，当前实现没有签名前 HEAD。 |
-| V3 冻结布局 | User 与 Edge 各创建 40 MiB 意图，数据库布局置为首次保存的 16 MiB、3 片；将 app 当前配置改成 32 MiB 后请求 part 3。两条路由均返回 422“分片编号超出上传布局”。重新请求 part 1 仍返回 expected size 16 MiB；DB 布局仍是 16 MiB/3 片。 | 已存在布局始终由持久化的 part_size/count 决定；合法末片可续传，末片大小为剩余字节。 | **Fail / WARNING**：重新加载配置影响了编号上限，虽没有改写 DB 布局，却打断合法断点恢复。 |
+| V3 冻结布局 | User 与 Edge 各创建 40 MiB 意图；先以 16 MiB 配置调用真实 part-urls API，收到 202 并持久化 16 MiB/3 片布局，再运行 initialize worker（provider multipart 操作为受控 stub）。将应用配置重新加载为 32 MiB 后请求原布局 part 3，两条路由均返回 422“分片编号超出上传布局”。该 API 探针证明首次布局真实经由路由保存，续传拒绝真实经由路由产生；provider 使用 stub，不是 RustFS 端到端续传。 | 已存在布局始终由持久化的 part_size/count 决定；合法末片可续传，末片大小为剩余字节。 | **Fail / WARNING**：重新加载配置影响了编号上限，虽没有改写 DB 布局，却打断合法断点恢复。 |
 
 对应位置：
 
