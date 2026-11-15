@@ -40,7 +40,8 @@ def docker(*args: str, check: bool = True):
 def inspect_exact(container_id: str) -> dict:
     result = docker("inspect", container_id, check=False)
     if result.returncode:
-        if "No such object" in result.stderr or "No such container" in result.stderr:
+        missing_message = result.stderr.lower()
+        if "no such object" in missing_message or "no such container" in missing_message:
             raise LookupError(container_id)
         raise HarnessError(f"Docker inspect failed: {result.stderr.strip()[:500]}")
     try:

@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import struct
 import time
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from sqlalchemy import select
@@ -98,6 +101,14 @@ def start_transfer(client, app, org, session_id, *, content, expected_sha=None,
     return upload, created.json()["asset"], etag
 
 
+def mp4_sized(target_size: int) -> bytes:
+    """Append a valid ISO-BMFF free box to the small synthetic MP4 fixture."""
+    content = FIXTURE.read_bytes()
+    padding = target_size - len(content)
+    assert padding >= 8
+    return content + struct.pack(">I4s", padding, b"free") + bytes(padding - 8)
+
+
 @pytest.mark.storage
 def test_rustfs_full_upload_resume_complete_private_range_and_cleanup(client, seeded_account,
                                                                       configured_media_app,
@@ -182,7 +193,8 @@ def test_rustfs_full_upload_resume_complete_private_range_and_cleanup(client, se
     finally:
         app.state.settings = original_settings
 
-    # A grantee's presigned URL cannot outlive the specific active grant used to read the asset.
+    # An unbounded Grant never removes the signed-in identity deadline. Verify the
+    # actual RustFS SigV4 TTL and that both the bearer URL and new API reads expire.
     reader, reader_headers = seeded_account("media-reader")
     assert client.post(
         f"/api/v1/tenants/{org['tenant']['id']}/members", headers=org["oh"],
@@ -193,14 +205,63 @@ def test_rustfs_full_upload_resume_complete_private_range_and_cleanup(client, se
         headers=org["oh"], json={"user_id": reader["id"]},
     ).status_code == 201
     assert client.post(asset_url + "/playback-url", headers=reader_headers).status_code == 404
-    grant_deadline = datetime.now(UTC) + timedelta(seconds=90)
-    assert client.put(
+    permanent_grant = client.put(
         org["base"] + f"/training-sessions/{session['id']}/read-grants/{reader['id']}",
-        headers=org["oh"], json={"expires_at": grant_deadline.isoformat()},
-    ).status_code == 204
-    reader_url = client.post(asset_url + "/playback-url", headers=reader_headers)
-    assert reader_url.status_code == 200, reader_url.text
-    assert datetime.fromisoformat(reader_url.json()["expires_at"]) <= grant_deadline
+        headers=org["oh"], json={},
+    )
+    assert permanent_grant.status_code == 204
+    identity_now = datetime.now(UTC)
+    identity_deadline = identity_now + timedelta(seconds=12)
+    reader_token = reader_headers["Authorization"].split(" ", 1)[1]
+    with app.state.sessions() as db:
+        auth = db.get(AuthSession, token_hash(reader_token))
+        auth.expires_at = identity_deadline
+        db.commit()
+    reader_playback = client.post(asset_url + "/playback-url", headers=reader_headers)
+    reader_download = client.post(asset_url + "/download-url", headers=reader_headers)
+    assert reader_playback.status_code == reader_download.status_code == 200
+    signed_expirations = []
+    for body in (reader_playback.json(), reader_download.json()):
+        signed_at = datetime.strptime(
+            parse_qs(urlparse(body["url"]).query)["X-Amz-Date"][0], "%Y%m%dT%H%M%SZ",
+        ).replace(tzinfo=UTC)
+        actual_ttl = int(parse_qs(urlparse(body["url"]).query)["X-Amz-Expires"][0])
+        signed_expiry = signed_at + timedelta(seconds=actual_ttl)
+        response_expiry = datetime.fromisoformat(body["expires_at"])
+        assert 1 <= actual_ttl <= 12
+        assert signed_expiry <= identity_deadline
+        assert response_expiry <= identity_deadline
+        signed_expirations.append(signed_expiry)
+    time.sleep(13)
+    with pytest.raises(urllib.error.HTTPError) as auth_expired_url:
+        urllib.request.urlopen(reader_playback.json()["url"], timeout=5)
+    assert auth_expired_url.value.code in {401, 403}
+    assert client.post(asset_url + "/playback-url", headers=reader_headers).status_code == 401
+
+    # Remove only the ready asset's exact verified version in the disposable
+    # RustFS bucket. Both URL endpoints must fail closed without rewriting history.
+    with app.state.sessions() as db:
+        ready_asset = db.get(VideoAsset, asset["id"])
+        media_object = db.get(MediaObject, ready_asset.storage_object_ref)
+        exact_key, exact_version = media_object.object_key, media_object.object_version
+        original_reference = ready_asset.storage_object_ref
+        original_phase = media_object.phase
+    provider.delete_object(exact_key, exact_version)
+    with pytest.raises(StorageError) as exact_head_missing:
+        provider.head_object(exact_key, exact_version)
+    assert exact_head_missing.value.code == "not_found"
+    for operation in ("playback-url", "download-url"):
+        missing_read = client.post(asset_url + "/" + operation, headers=org["oh"])
+        assert missing_read.status_code == 503, missing_read.text
+        assert missing_read.json()["detail"]["code"] == "media_unavailable"
+        assert "url" not in missing_read.json()
+    with app.state.sessions() as db:
+        still_ready = db.get(VideoAsset, asset["id"])
+        still_object = db.get(MediaObject, original_reference)
+        assert still_ready.status == "ready"
+        assert still_ready.storage_object_ref == original_reference
+        assert still_object.phase == original_phase == "verified"
+        assert still_object.object_key == exact_key and still_object.object_version == exact_version
 
     # A second legal intent proves a lost client receipt can be reconstructed from ListParts.
     lost_upload, _lost_asset, lost_etag = start_transfer(
@@ -906,3 +967,120 @@ def test_orphan_discovery_paginates_observes_twice_and_deletes_only_verified_fai
     for key, version_id in expected_objects:
         with pytest.raises(StorageError):
             provider.head_object(key, version_id)
+
+
+@pytest.mark.storage
+def test_rustfs_user_and_edge_resume_original_layout_after_config_reload(
+    client, app, seeded_account, configured_media_app
+):
+    """40 MiB media resumes with persisted 16 MiB layout after config becomes 32 MiB."""
+    content = mp4_sized(40 * 1024 * 1024)
+    expected_sha = hashlib.sha256(content).hexdigest()
+    provider = app.state.storage_provider
+    original_settings = app.state.settings
+
+    def run_actor(kind: str):
+        app.state.settings = replace(app.state.settings, media_part_size_bytes=PART_BYTES)
+        if kind == "user":
+            org = setup_org(client, seeded_account)
+            session = new_session(client, org, key="rustfs-layout-user-session")
+            created = create_intent(
+                client, org, session["id"], key="rustfs-layout-user-intent",
+                expected_size_bytes=len(content), expected_sha256=expected_sha,
+            )
+            assert created.status_code == 201, created.text
+            upload, asset = created.json()["upload_session"], created.json()["asset"]
+            headers = org["ch"]
+            part_urls = org["base"] + f"/upload-sessions/{upload['id']}/part-urls"
+            confirm_base = org["base"] + f"/upload-sessions/{upload['id']}/parts"
+            list_parts = confirm_base
+            complete_url = org["base"] + f"/upload-sessions/{upload['id']}/complete"
+            status_url = org["base"] + f"/upload-sessions/{upload['id']}"
+        else:
+            org = build_edge_org(client, seeded_account)
+            node, token = activate_node(client, org["oh"], org["base"], key="rustfs-layout-edge-node")
+            device = make_device(client, org["oh"], org["base"], node["id"], key="rustfs-layout-edge-device")
+            session = new_edge_session(client, org, key="rustfs-layout-edge-session")
+            created = edge_intent(
+                client, token, session["id"], device["id"], key="rustfs-layout-edge-intent",
+                expected_size_bytes=len(content), expected_sha256=expected_sha,
+            )
+            assert created.status_code == 201, created.text
+            upload, asset = created.json()["upload_session"], created.json()["asset"]
+            headers = {"Authorization": f"Bearer {token}"}
+            part_urls = f"/api/v1/edge/upload-sessions/{upload['id']}/part-urls"
+            confirm_base = f"/api/v1/edge/upload-sessions/{upload['id']}/parts"
+            list_parts = confirm_base
+            complete_url = f"/api/v1/edge/upload-sessions/{upload['id']}/complete"
+            status_url = f"/api/v1/edge/upload-sessions/{upload['id']}"
+
+        first = client.post(part_urls, headers=headers, json={"part_numbers": [1]})
+        assert first.status_code == 202, first.text
+        with app.state.sessions() as db:
+            saved = db.get(UploadSession, upload["id"])
+            assert (saved.part_size_bytes, saved.part_count) == (PART_BYTES, 3)
+        assert process_media_job(app.state.sessions, provider, app.state.settings)
+        with app.state.sessions() as db:
+            obj = db.scalar(select(MediaObject).where(MediaObject.upload_session_id == upload["id"]))
+            assert obj.phase == "uploading" and obj.provider_upload_id
+
+        # Process restart/config reload; the durable 16 MiB layout remains authoritative.
+        app.state.settings = replace(app.state.settings, media_part_size_bytes=2 * PART_BYTES)
+        resumed_third = client.post(part_urls, headers=headers, json={"part_numbers": [3]})
+        assert resumed_third.status_code == 200, resumed_third.text
+        third = resumed_third.json()["items"][0]
+        assert third["expected_size_bytes"] == 8 * 1024 * 1024
+        all_parts = client.post(part_urls, headers=headers, json={"part_numbers": [1, 2, 3]})
+        assert all_parts.status_code == 200, all_parts.text
+        items = {item["part_number"]: item for item in all_parts.json()["items"]}
+        assert [items[n]["expected_size_bytes"] for n in (1, 2, 3)] == [PART_BYTES, PART_BYTES, 8 * 1024 * 1024]
+
+        etags = {}
+        boundaries = (0, PART_BYTES, 2 * PART_BYTES, len(content))
+        for number in (1, 2, 3):
+            body = content[boundaries[number - 1]:boundaries[number]]
+            assert len(body) == items[number]["expected_size_bytes"]
+            put_request = urllib.request.Request(items[number]["url"], data=body, method="PUT")
+            with urllib.request.urlopen(put_request, timeout=60) as response:
+                assert 200 <= response.status < 300
+                etag = response.headers.get("ETag")
+            assert etag
+            confirm = client.put(
+                confirm_base + f"/{number}", headers=headers,
+                json={"etag": etag, "size_bytes": len(body)},
+            )
+            assert confirm.status_code == 200, confirm.text
+            etags[number] = etag
+
+        listed = client.get(list_parts, headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert [item["part_number"] for item in listed.json()["items"]] == [1, 2, 3]
+        assert [item["size_bytes"] for item in listed.json()["items"]] == [PART_BYTES, PART_BYTES, 8 * 1024 * 1024]
+        completed = client.post(
+            complete_url, headers={**headers, "Idempotency-Key": f"rustfs-layout-{kind}-complete"},
+            json={"parts": [{"part_number": n, "etag": etags[n]} for n in (1, 2, 3)]},
+        )
+        assert completed.status_code == 202, completed.text
+        assert drain_worker(app) >= 1
+        terminal = client.get(status_url, headers=headers)
+        assert terminal.status_code == 200 and terminal.json()["status"] == "completed"
+        read_asset = client.get(org["base"] + f"/video-assets/{asset['id']}", headers=org["ch"])
+        assert read_asset.status_code == 200, read_asset.text
+        ready = read_asset.json()
+        assert ready["status"] == "ready"
+        assert ready["size_bytes"] == len(content)
+        assert ready["verified_size_bytes"] == len(content)
+        assert ready["checksum_sha256"] == expected_sha
+        with app.state.sessions() as db:
+            saved = db.get(UploadSession, upload["id"])
+            obj = db.scalar(select(MediaObject).where(MediaObject.upload_session_id == upload["id"]))
+            assert (saved.part_size_bytes, saved.part_count) == (PART_BYTES, 3)
+            assert (obj.phase, obj.observed_size_bytes, obj.observed_sha256) == (
+                "verified", len(content), expected_sha,
+            )
+
+    try:
+        run_actor("user")
+        run_actor("edge")
+    finally:
+        app.state.settings = original_settings

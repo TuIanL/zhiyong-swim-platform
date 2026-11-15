@@ -94,3 +94,18 @@
 - 不含即时撤销已签 URL、媒体转码/HLS、云边批量同步、Edge 离线身份恢复、RLS 或生产部署。
 - SQLite datetime adapter 与 GitHub runner 的 Node.js action 弃用警告未影响结果；仍是后续维护事项。
 - M3 Apply 交付后等待负责人独立 Verify 授权；Notion 原 P1 任务的状态、负责人、日期保持原样，本轮只追加证据链接。
+
+## 7. 最终 Apply 提交与原始 CI 证据补记
+
+本节是对原 Apply 证据链的补充，保留上文中间 Head、CI 失败与修复轨迹，不回写历史结论。
+
+| 项 | 最终 Apply 证据 |
+| --- | --- |
+| 最终 Apply 业务代码 Head | `ba2216b058ebcbf3b51d59fcd80d6f073ad36961` |
+| 对应 CI Run | [43606071954](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43606071954)；run 元数据与 artifacts 均绑定该业务 Head |
+| SQLite Job | 194 passed / 91 skipped / 0 failed |
+| PostgreSQL 17 Job | 265 passed / 20 skipped / 0 failed；[PostgreSQL evidence artifact 14118535563](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43606071954/artifacts/14118535563) |
+| 隔离 RustFS Job | 15 passed / 0 failed；[RustFS evidence artifact 14117424479](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43606071954/artifacts/14117424479) |
+| 容器清理 | PostgreSQL 主清理 `removed`，cleanup-run-file 兜底 `absent` / exit 0；RustFS 精确归属清理 `removed` |
+
+这组结果只表示原始 Apply Head `ba2216b` 的 Apply CI 全绿。随后独立 Verify 在 `ba2216b` 上发现 C1、W1、W2 与 W3；原 Apply CI 不能表述为已通过独立 Verify，也不能替代本次 Remediation 的回归。Remediation 的代码、测试与 CI 证据单独记录在 [cloud-media-upload-transfer-remediation.md](cloud-media-upload-transfer-remediation.md)，不改写 `tasks.md` 的 42/42 Apply 历史。

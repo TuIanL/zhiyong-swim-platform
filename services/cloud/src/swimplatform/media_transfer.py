@@ -291,6 +291,27 @@ def _part_size(upload: UploadSession, number: int) -> int:
     return upload.expected_size_bytes - upload.part_size_bytes * (upload.part_count - 1)
 
 
+def _resolve_part_layout(upload: UploadSession, settings, *, has_media_object: bool) -> tuple[int, int]:
+    """Use the frozen layout once a physical upload exists; config only seeds it."""
+    stored_size, stored_count = upload.part_size_bytes, upload.part_count
+    if has_media_object:
+        if stored_size is None or stored_count is None:
+            fail(409, "state_conflict", "已有物理上传记录但缺少固定分片布局")
+        part_size, count = stored_size, stored_count
+        if part_size <= 0 or count <= 0 or count != math.ceil(upload.expected_size_bytes / part_size):
+            fail(409, "state_conflict", "已保存的分片布局与上传大小不一致")
+    else:
+        if stored_size is not None or stored_count is not None:
+            fail(409, "state_conflict", "已保存分片布局但物理上传记录缺失")
+        part_size = settings.media_part_size_bytes
+        if part_size <= 0:
+            fail(503, "storage_unavailable", "当前分片布局配置无效")
+        count = math.ceil(upload.expected_size_bytes / part_size)
+    if count > MAX_PARTS_PER_UPLOAD:
+        fail(409, "transfer_policy_conflict", "声明大小超过当前分片布局能力")
+    return part_size, count
+
+
 def _preparation(upload: UploadSession) -> PreparationRead:
     return PreparationRead(
         upload_session_id=upload.id, asset_id=upload.asset_id,
@@ -564,11 +585,7 @@ def user_part_urls(tenant_id: UUID, site_id: UUID, upload_session_id: UUID,
         db.rollback()
         fail(409, "transfer_policy_conflict", "历史意图超过 M3 物理传输策略上限")
     settings = request.app.state.settings
-    part_size = settings.media_part_size_bytes
-    count = math.ceil(upload.expected_size_bytes / part_size)
-    if count > MAX_PARTS_PER_UPLOAD:
-        db.rollback()
-        fail(409, "transfer_policy_conflict", "声明大小超过当前分片布局能力")
+    part_size, count = _resolve_part_layout(upload, settings, has_media_object=obj is not None)
     if any(number > count for number in payload.part_numbers):
         db.rollback()
         fail(422, "validation_error", "分片编号超出上传布局")
@@ -667,11 +684,7 @@ def edge_part_urls(upload_session_id: UUID, payload: PartURLsRequest, request: R
         db.rollback()
         fail(409, "transfer_policy_conflict", "历史意图超过 M3 物理传输策略上限")
     settings = request.app.state.settings
-    part_size = settings.media_part_size_bytes
-    count = math.ceil(upload.expected_size_bytes / part_size)
-    if count > MAX_PARTS_PER_UPLOAD:
-        db.rollback()
-        fail(409, "transfer_policy_conflict", "声明大小超过当前分片布局能力")
+    part_size, count = _resolve_part_layout(upload, settings, has_media_object=obj is not None)
     if any(number > count for number in payload.part_numbers):
         db.rollback()
         fail(422, "validation_error", "分片编号超出上传布局")
@@ -983,8 +996,8 @@ def edge_complete(upload_session_id: UUID, payload: CompleteRequest, request: Re
                                                                  server_now(request)))
 
 
-def _issue_access_url(*, tenant_id, site_id, asset_id, request, user, db, disposition):
-    provider = _provider(request)
+def _access_snapshot(*, tenant_id, site_id, asset_id, request, user, db) -> dict:
+    """Resolve current access and immutable object identity without taking row locks."""
     site_access(db, tenant_id, site_id, user)
     member = membership(db, tenant_id, user.id)
     asset = db.scalar(select(VideoAsset).where(VideoAsset.id == str(asset_id),
@@ -996,7 +1009,7 @@ def _issue_access_url(*, tenant_id, site_id, asset_id, request, user, db, dispos
                                                       TrainingSession.tenant_id == asset.tenant_id,
                                                       TrainingSession.site_id == asset.site_id))
     now = server_now(request)
-    if not can_read_asset(db, asset, session, user, member, now):
+    if not session or not can_read_asset(db, asset, session, user, member, now):
         fail(404, "video_asset_not_found", "视频资产不存在或无访问权限")
     if asset.status != "ready" or not asset.storage_object_ref:
         fail(409, "asset_not_ready", "视频资产尚未完成验证")
@@ -1011,57 +1024,119 @@ def _issue_access_url(*, tenant_id, site_id, asset_id, request, user, db, dispos
     auth = db.get(AuthSession, getattr(request.state, "session_hash", None))
     if not auth or auth.user_id != user.id or as_utc(auth.expires_at) <= now:
         fail(401, "unauthorized", "登录已失效")
-    identity_remaining = int((as_utc(auth.expires_at) - now).total_seconds())
-    if identity_remaining < 1:
-        fail(401, "unauthorized", "登录即将失效，无法签发媒体访问 URL")
+
+    # Identity expiry is unconditional. Grant paths are ORed, so the selected
+    # grant deadline is the longest still-active path; permanent grants contribute
+    # no deadline of their own and never remove the identity deadline.
     deadlines = [as_utc(auth.expires_at)]
-    if member.role not in {"owner", "admin"} and asset.created_by_user_id != user.id:
-        if session.created_by_user_id == user.id:
-            pass
-        else:
-            asset_grant = db.scalars(select(AssetReadGrant).where(
-                AssetReadGrant.tenant_id == asset.tenant_id,
-                AssetReadGrant.site_id == asset.site_id,
-                AssetReadGrant.asset_id == asset.id,
-                AssetReadGrant.grantee_user_id == user.id,
-                AssetReadGrant.revoked_at.is_(None),
-                (AssetReadGrant.expires_at.is_(None) | (AssetReadGrant.expires_at > now)),
-            )).all()
-            session_grant = db.scalars(select(SessionReadGrant).where(
-                SessionReadGrant.tenant_id == session.tenant_id,
-                SessionReadGrant.site_id == session.site_id,
-                SessionReadGrant.session_id == session.id,
-                SessionReadGrant.grantee_user_id == user.id,
-                SessionReadGrant.revoked_at.is_(None),
-                (SessionReadGrant.expires_at.is_(None) | (SessionReadGrant.expires_at > now)),
-            )).all()
-            grants = [*asset_grant, *session_grant]
-            if grants:
-                # Access is an OR over grants. An unbounded grant or the longest
-                # valid grant is the authorization path that remains active longest.
-                if any(grant.expires_at is None for grant in grants):
-                    deadlines = []
-                else:
-                    deadlines.append(max(as_utc(grant.expires_at) for grant in grants))
-    remaining = min((deadline - now).total_seconds() for deadline in deadlines) if deadlines else None
-    if remaining is not None and int(remaining) < 1:
+    uses_grant = (member.role not in {"owner", "admin"}
+                  and asset.created_by_user_id != user.id
+                  and session.created_by_user_id != user.id)
+    if uses_grant:
+        asset_grants = db.scalars(select(AssetReadGrant).where(
+            AssetReadGrant.tenant_id == asset.tenant_id,
+            AssetReadGrant.site_id == asset.site_id,
+            AssetReadGrant.asset_id == asset.id,
+            AssetReadGrant.grantee_user_id == user.id,
+            AssetReadGrant.revoked_at.is_(None),
+            (AssetReadGrant.expires_at.is_(None) | (AssetReadGrant.expires_at > now)),
+        )).all()
+        session_grants = db.scalars(select(SessionReadGrant).where(
+            SessionReadGrant.tenant_id == session.tenant_id,
+            SessionReadGrant.site_id == session.site_id,
+            SessionReadGrant.session_id == session.id,
+            SessionReadGrant.grantee_user_id == user.id,
+            SessionReadGrant.revoked_at.is_(None),
+            (SessionReadGrant.expires_at.is_(None) | (SessionReadGrant.expires_at > now)),
+        )).all()
+        grants = [*asset_grants, *session_grants]
+        if not grants:
+            fail(404, "video_asset_not_found", "视频资产不存在或无访问权限")
+        finite_grants = [as_utc(grant.expires_at) for grant in grants if grant.expires_at is not None]
+        if len(finite_grants) == len(grants):
+            deadlines.append(max(finite_grants))
+    remaining = min((deadline - now).total_seconds() for deadline in deadlines)
+    ttl = min(request.app.state.settings.media_read_url_seconds,
+              request.app.state.settings.media_read_url_max_seconds, 300, int(remaining))
+    if ttl < 1:
+        if as_utc(auth.expires_at) - now < timedelta(seconds=1):
+            fail(401, "unauthorized", "登录即将失效，无法签发媒体访问 URL")
         fail(404, "video_asset_not_found", "资源授权即将失效，无法签发媒体访问 URL")
-    ttl_candidates = [request.app.state.settings.media_read_url_seconds,
-                      request.app.state.settings.media_read_url_max_seconds, 300]
-    if remaining is not None:
-        ttl_candidates.append(int(remaining))
-    ttl = min(ttl_candidates)
-    safe_name = f"video-{asset.id}.mp4"
-    content = None
-    if disposition == "attachment":
-        content = f"attachment; filename*=UTF-8''{quote(safe_name, safe='')}"
-    else:
-        content = f"inline; filename*=UTF-8''{quote(safe_name, safe='')}"
+    expected_size = asset.verified_size_bytes
+    if expected_size is None or obj.observed_size_bytes != expected_size:
+        fail(503, "media_unavailable", "已验证媒体对象大小信息不一致")
+    metadata = {
+        "owner": "swim-platform", "purpose": "isolated-media-transfer",
+        "tenant-id": asset.tenant_id, "site-id": asset.site_id,
+        "session-id": asset.session_id, "asset-id": asset.id,
+        "upload-session-id": obj.upload_session_id,
+    }
+    run_id = getattr(request.app.state.settings, "media_run_id", None)
+    if run_id:
+        metadata["run-id"] = run_id
+    return {
+        "asset_id": asset.id, "object_key": obj.object_key,
+        "object_version": obj.object_version, "expected_size": expected_size,
+        "metadata": metadata, "ttl": ttl, "deadline": min(deadlines), "now": now,
+    }
+
+
+def _issue_access_url(*, tenant_id, site_id, asset_id, request, user, db, disposition):
+    provider = _provider(request)
+    snapshot = _access_snapshot(tenant_id=tenant_id, site_id=site_id, asset_id=asset_id,
+                                request=request, user=user, db=db)
+    # End the read transaction before remote I/O. No provider request is made while
+    # holding database row locks or a transaction snapshot open.
+    db.rollback()
+    head, head_error = None, None
     try:
-        url = provider.sign_read(obj.object_key, obj.object_version, ttl, disposition=content)
-    except StorageError:
-        fail(503, "storage_unavailable", "无法签发媒体访问 URL")
-    response = AccessUrlRead(asset_id=asset.id, url=url, expires_at=now + timedelta(seconds=ttl))
+        head = provider.head_object(snapshot["object_key"], snapshot["object_version"])
+    except StorageError as exc:
+        head_error = exc
+
+    # Recheck authorization, identity, and the exact DB reference after bounded
+    # storage I/O so an expiry/revocation during HEAD cannot produce a new URL.
+    current = _access_snapshot(tenant_id=tenant_id, site_id=site_id, asset_id=asset_id,
+                               request=request, user=user, db=db)
+    if (current["object_key"] != snapshot["object_key"]
+            or current["object_version"] != snapshot["object_version"]
+            or current["expected_size"] != snapshot["expected_size"]):
+        db.rollback()
+        fail(503, "media_unavailable", "媒体对象引用在签发期间发生变化")
+    db.rollback()
+    if head_error:
+        if head_error.code == "not_found":
+            fail(503, "media_unavailable", "已验证的精确媒体对象版本不存在")
+        fail(503, "storage_unavailable", f"对象存储 HEAD 校验失败（{head_error.code}）")
+    returned_metadata = {str(key).lower(): str(value)
+                         for key, value in (head.get("metadata") or {}).items()}
+    if (head.get("version_id") != snapshot["object_version"]
+            or head.get("size") != snapshot["expected_size"]
+            or any(returned_metadata.get(key) != value
+                   for key, value in snapshot["metadata"].items())):
+        fail(503, "media_unavailable", "已验证的精确媒体对象身份或大小不匹配")
+    ttl = current["ttl"]
+    safe_name = f"video-{current['asset_id']}.mp4"
+    content = f"{disposition}; filename*=UTF-8''{quote(safe_name, safe='')}"
+    try:
+        # Signing is local for the S3 adapter, but time still passes between the
+        # deadline snapshot and signature creation. Use a bounded retry with a
+        # shorter integer TTL if signing crossed the absolute authorization bound.
+        for _ in range(2):
+            url = provider.sign_read(current["object_key"], current["object_version"], ttl,
+                                     disposition=content)
+            signed_after = server_now(request)
+            if signed_after + timedelta(seconds=ttl) <= current["deadline"]:
+                break
+            ttl -= 1
+            if ttl < 1:
+                fail(401, "unauthorized", "身份或资源授权期限不足以签发媒体访问 URL")
+        else:
+            fail(401, "unauthorized", "身份或资源授权期限不足以签发媒体访问 URL")
+    except StorageError as exc:
+        fail(503, "storage_unavailable", f"无法签发媒体访问 URL（{exc.code}）")
+    response = AccessUrlRead(asset_id=current["asset_id"], url=url,
+                             expires_at=signed_after + timedelta(seconds=ttl))
     return JSONResponse(status_code=200, content=response.model_dump(mode="json"),
                         headers={"Cache-Control": "private, no-store",
                                  "Referrer-Policy": "no-referrer"})
