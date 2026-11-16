@@ -44,11 +44,16 @@
 - **THEN** 多台camera MUST 可取得独立通用Device ID，不限制为一Edge一Device；当前未支持kind MUST 返回422，未来类型 SHALL 通过独立领域/协议扩展，不更换既有Device ID或归属模型
 
 ### Requirement: Independent revocable edge credentials
-Edge凭据 MUST 与User会话分离，只授权所属Node的heartbeat，并使用`Authorization: Bearer swim_edge_<opaque-token>`。User与Edge凭据 MUST NOT 互用。
+
+Edge凭据 MUST 与User会话分离，仅授权所属Node的heartbeat及明确批准的原发起上传意图/传输/恢复/完成操作，并使用`Authorization: Bearer swim_edge_<opaque-token>`。每个媒体操作 SHALL 继续核验节点与资源同tenant/site及原发起主体，User与Edge凭据 MUST NOT 互用，不得因支持上传获得用户角色、他人上传或媒体读取权限。
 
 #### Scenario: User and node identity separation
-- **WHEN** User token用于Edge heartbeat，或Edge token用于用户节点管理/既有基础API
+- **WHEN** User token用于Edge heartbeat或上传，或Edge token用于用户节点管理/既有基础API/用户媒体读取
 - **THEN** 服务 MUST 返回401，节点凭据 MUST NOT 通过用户身份路径获得成员权限
+
+#### Scenario: Node credential is not a general media credential
+- **WHEN** 有效节点凭据请求其他节点的上传或跨tenant/site资源
+- **THEN** 服务 MUST 返回404且无传输/签名副作用；该凭据生命周期、撤销及35天离线限制 MUST 保持原规则，不得自动续期
 
 ### Requirement: Bounded credential lifecycle
 D12凭据默认有效期为7天、最长30天，以服务端UTC判断到期。明文 MUST 仅在成功签发响应中返回一次；数据库、普通读取、日志和幂等记录 MUST 不保存明文，普通读取也 MUST NOT 暴露摘要。过期/撤销凭据 MUST 被拒绝；服务 MUST NOT 自动续期、复活撤销凭据或提供自动轮换和离线恢复协议。

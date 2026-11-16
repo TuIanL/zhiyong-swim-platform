@@ -25,7 +25,7 @@
 
 PR 元数据确认 PR #6 open、Draft、base 为 main，head 为 `3ed9b25a679299b340ed4b7f0c8eea67c0bee9a6`。本地 Git 中 `origin/main` 仍为批准基线。`48d5df5..3ed9b25` 的唯一文件差异是 `docs/verification/cloud-media-upload-transfer-remediation.md`；没有业务代码差异。故 48d5 是被复核的修复代码 Head，3ed9 是当前 PR 文档 Head。
 
-原始 [首次 Verify 报告](verification.md) 与 [Apply 报告](../../../docs/verification/cloud-media-upload-transfer-apply.md) 均保留。Apply Run `43606071954` 仅作为原始 Apply 证据，不作为 Remediation 回归证据。
+原始 [首次 Verify 报告](verification.md) 与 [Apply 报告](../../../../docs/verification/cloud-media-upload-transfer-apply.md) 均保留。Apply Run `43606071954` 仅作为原始 Apply 证据，不作为 Remediation 回归证据。
 
 ### 固定 Remediation CI
 
@@ -73,7 +73,7 @@ Run 43670023324 的 PG JUnit 为 302 项：281 passed、21 skipped、0 failed；
 
 ### W3 — Apply 证据链
 
-[Apply 报告](../../../docs/verification/cloud-media-upload-transfer-apply.md) 的第 7 节保留早期 Apply Head、CI 和失败修复轨迹，并追加最终 Apply Head `ba2216b058ebcbf3b51d59fcd80d6f073ad36961`、Run `43606071954`、SQLite 210/92、PostgreSQL 281/21、RustFS 16/16，以及 PG/RustFS artifact 回链。该段明确指出 Apply CI 全绿不代表独立 Verify 已通过。Remediation 的新测试结果只归属于 48d5 / 3ed9 对应的后续 CI，没有回填成原 Apply 测试。
+[Apply 报告](../../../../docs/verification/cloud-media-upload-transfer-apply.md) 的第 7 节保留早期 Apply Head、CI 和失败修复轨迹，并追加最终 Apply Head `ba2216b058ebcbf3b51d59fcd80d6f073ad36961`、Run `43606071954`、SQLite 210/92、PostgreSQL 281/21、RustFS 16/16，以及 PG/RustFS artifact 回链。该段明确指出 Apply CI 全绿不代表独立 Verify 已通过。Remediation 的新测试结果只归属于 48d5 / 3ed9 对应的后续 CI，没有回填成原 Apply 测试。
 
 ## Requirement / Scenario 双向追溯
 

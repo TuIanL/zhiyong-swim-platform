@@ -49,7 +49,7 @@
 #### Scenario: Restricted application identity
 
 - **WHEN** PostgreSQL API测试连接迁移身份和应用身份并执行正常业务及权限探测
-- **THEN** 两种身份 MUST 通过连接级 `search_path` 定位专用schema，不得在连接池上依赖会话级 `SET` 残留；应用身份不得拥有超级用户、建库、建角色、表或schema所有权、临时表或绕过行级安全的权限，且不得是迁移身份的成员；正常授权业务 MUST 可用，应用身份只 SHALL 获该schema的 `USAGE`、已批准15张业务表的 `SELECT`/`INSERT`/`UPDATE`/`DELETE` 和迁移版本表的 `SELECT`，不得对未批准表授予DML，且 MUST 无法建表、临时建表、`CREATE SCHEMA`、改表、建索引、建角色、建库、`TRUNCATE`、写迁移版本表或通过 `SET ROLE` 切换为迁移身份；已批准15张业务表指原六表 `users`/`auth_sessions`/`tenants`/`tenant_memberships`/`sites`/`site_memberships`、Cloud Edge Registry 四表 `edge_nodes`/`devices`/`edge_credentials`/`idempotency_records` 与 `training_sessions`/`video_assets`/`upload_sessions`/`session_read_grants`/`asset_read_grants`
+- **THEN** 两种身份 MUST 通过连接级 `search_path` 定位专用schema，不得在连接池上依赖会话级 `SET` 残留；应用身份不得拥有超级用户、建库、建角色、表或schema所有权、临时表或绕过行级安全的权限，且不得是迁移身份的成员；正常授权业务 MUST 可用，应用身份只 SHALL 获该schema的 `USAGE`、已批准19张业务表的 `SELECT`/`INSERT`/`UPDATE`/`DELETE` 和迁移版本表的 `SELECT`，不得对未批准表授予DML，且 MUST 无法建表、临时建表、`CREATE SCHEMA`、改表、建索引、建角色、建库、`TRUNCATE`、写迁移版本表或通过 `SET ROLE` 切换为迁移身份；已批准19张业务表指原六表 `users`/`auth_sessions`/`tenants`/`tenant_memberships`/`sites`/`site_memberships`、Cloud Edge Registry 四表 `edge_nodes`/`devices`/`edge_credentials`/`idempotency_records` 与 `training_sessions`/`video_assets`/`upload_sessions`/`session_read_grants`/`asset_read_grants`，以及媒体传输四表 `media_objects`/`upload_parts`/`media_jobs`/`media_cleanup_candidates`
 
 #### Scenario: Failure during test execution
 
@@ -62,7 +62,7 @@
 - **THEN** 应用身份 MUST 无权访问该额外表，批准表的正常业务 MUST 可用，原DDL/版本表写入/角色切换拒绝及真实容器归属/清理保证 MUST 全部保留
 
 ### Requirement: PostgreSQL schema integrity
-云端基础 SHALL 在专用 PostgreSQL 环境通过真实迁移建立已发布六表基线、Cloud Edge Registry 四表与本次采集业务五表，保持各对应版本模型的字段、主键、唯一性、外键、索引与级联语义，且迁移版本表 MUST 位于测试 schema 内并与模型反射一致。数据库 MUST 拒绝无效归属或重复记录；迁移失败 MUST 不留下被误报为可用的部分基线。
+云端基础 SHALL 在专用 PostgreSQL 环境通过真实迁移建立已发布六表基线、Cloud Edge Registry 四表、已发布采集业务五表与媒体传输四表，保持各对应版本模型的字段、主键、唯一性、外键、索引与级联语义，且迁移版本表 MUST 位于测试 schema 内并与模型反射一致。数据库 MUST 拒绝无效归属或重复记录；迁移失败 MUST 不留下被误报为可用的部分基线。
 
 #### Scenario: Empty database migration and round trip
 
@@ -77,7 +77,7 @@
 #### Scenario: Unique keys and cascading removal
 
 - **WHEN** 创建重复邮箱、机构标识、同机构同名场馆、成员或授权，或者删除其父记录
-- **THEN** 重复写入 MUST 被拒绝，允许的父记录删除 MUST 按已声明级联关系删除子记录，不涉及该父记录的其他机构记录 MUST 保留；删除全局账号时，其跨机构成员关系亦按级联删除。本 Change 新增的五张表以 RESTRICT 引用父级，其存在会阻止父级删除（见下一场景），因此本场景的级联断言只在没有这些子记录的数据集上成立
+- **THEN** 重复写入 MUST 被拒绝，允许的父记录删除 MUST 按已声明级联关系删除子记录，不涉及该父记录的其他机构记录 MUST 保留；删除全局账号时，其跨机构成员关系亦按级联删除。采集业务五表及媒体传输四表以 RESTRICT 引用父级，其存在会阻止父级删除（见下一场景），因此本场景的级联断言只在没有这些子记录的数据集上成立
 
 #### Scenario: Interrupted migration transaction
 
@@ -87,17 +87,29 @@
 #### Scenario: Approved incremental migration preserves foundation
 
 - **WHEN** 含六表基础数据的隔离PostgreSQL库依次升级到 Cloud Edge Registry revision 与本次新 revision，再降级到20261106_0001并重新升级
-- **THEN** 原六表数据与既有31个操作 MUST 保持可用；head的15张表、复合归属约束、schema落点、版本标记与当前模型 MUST 一致；新增迁移失败 MUST 回滚DDL/版本推进且不遗留半成品，不得改写初始或已发布迁移或连接外部数据库
+- **THEN** 原六表数据与既有47个操作 MUST 保持可用（仅允许本 Change 明示的兼容修订）；head的19张表、复合归属约束、schema落点、版本标记与当前模型 MUST 一致；新增迁移失败 MUST 回滚DDL/版本推进且不遗留半成品，不得改写初始或已发布迁移或连接外部数据库
 
 #### Scenario: Stepwise downgrade keeps earlier increments
 
 - **WHEN** 从本次 head 降级到 Cloud Edge Registry revision
-- **THEN** 本次新增的五张表 MUST 被移除，其前已发布的十张表、数据与版本标记 MUST 保持可用，重新升级后五张表 MUST 按当前模型重建
+- **THEN** 已发布0003新增的五张表及后续媒体传输四表 MUST 被移除，其前已发布的十张表、数据与版本标记 MUST 保持可用，重新升级后增量表 MUST 按当前模型重建
 
 #### Scenario: Restrict blocks history loss through parents
 
 - **WHEN** 已存在 Session 或 Asset 的场馆或机构被请求删除
 - **THEN** 数据库 MUST 以受限外键拒绝该删除，且 MUST NOT 级联清除历史 Session、Asset 或授权记录
+
+#### Scenario: Media transfer increment is reflected and least privileged
+- **WHEN** 含 M2 历史意图/授权/幂等数据的隔离库升级到媒体传输 revision
+- **THEN** head MUST 有19张批准表及其复合归属键、对象引用/分片唯一性与作业约束，原始字段、来源、采集时间与摘要 MUST 无损；应用角色不得访问未批准 canary 或修改迁移版本表
+
+#### Scenario: Safe media downgrade guard
+- **WHEN** 请求从媒体 revision 降级到0003，且存在媒体支持记录、已验证对象引用或新 complete 幂等记录
+- **THEN** 降级 MUST 显式拒绝并列出分类计数，不得删对象/丢记录；无本轮记录时允许降级并保持原15表/数据与0003版本，重新升级恢复19表
+
+#### Scenario: Media migration interruption preserves M2
+- **WHEN** 在新增表或 SQLite 重建既有表的迁移中注入受控失败
+- **THEN** DDL、数据与版本推进 MUST 回滚到0003，0001–0003已发布迁移摘要 MUST 不变，合法重试升级可继续，且不得连接外部库
 
 ### Requirement: PostgreSQL authorization parity
 PostgreSQL 环境下账号、机构、成员与场馆 API SHALL 遵守现有授权契约，覆盖匿名、非成员及 owner/admin/coach/athlete；授权变化后的新请求 MUST 使用最新成员关系。连接复用或失败回滚 MUST 不使后续用户继承前一请求的权限。验证连接复用与验证真实并发的用例 MUST 使用各自独立的连接配置：复用证据只允许在单个物理连接上按顺序发起请求，并发写入与行锁场景 MUST 使用足够数量的独立连接，不得以连接不足导致的等待或超时作为通过。本要求验证应用层授权，不声明数据库 RLS 已提供隔离。

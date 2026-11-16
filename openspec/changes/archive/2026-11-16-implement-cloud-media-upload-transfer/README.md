@@ -20,7 +20,7 @@
 
 ## CI与未验证范围
 
-M2归档head `dbad6a1`的[CI 43567828849](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43567828849)已通过，SQLite与PostgreSQL两个job均success；这是读取到的历史前置证据。固定M2业务核验head及详细用例/清理结果见[M2 Verify](../archive/2026-11-14-implement-cloud-session-asset-foundation/verification.md)，不改写报告。
+M2归档head `dbad6a1`的[CI 43567828849](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/43567828849)已通过，SQLite与PostgreSQL两个job均success；这是读取到的历史前置证据。固定M2业务核验head及详细用例/清理结果见[M2 Verify](../2026-11-14-implement-cloud-session-asset-foundation/verification.md)，不改写报告。
 
 本轮不在本机运行M3业务测试、不创建存储实例、不执行迁移。提案push/PR会运行现有CI，最新head对应状态在PR和Notion记录；它仅证明现有基线回归，**不证明尚未实现的M3分片、校验、清扫或访问已验收**。本文件不是独立OpenSpec Verify报告。
 

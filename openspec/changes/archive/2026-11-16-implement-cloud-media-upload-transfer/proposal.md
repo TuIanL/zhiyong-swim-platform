@@ -35,7 +35,7 @@ main `3352c6b17b2dd3b6921028b25606a999bb69b331` 已合并 M2（[PR #5](https://g
 
 ## Impact
 
-- 基线实查：15 张业务表、33 paths / 47 operations；`media.py` 无分片/complete/ready 路径，`upload_read.confirmed_parts` 恒空；M2 已归档且四项 WARNING 未关闭。README、领域/API/ADR 的部分历史段落仍写“未来/无表”，以主规格、0003、实际代码及 [M2 Verify](../archive/2026-11-14-implement-cloud-session-asset-foundation/verification.md) 定位真实能力，不在本轮改写历史。
+- 基线实查：15 张业务表、33 paths / 47 operations；`media.py` 无分片/complete/ready 路径，`upload_read.confirmed_parts` 恒空；M2 已归档且四项 WARNING 未关闭。README、领域/API/ADR 的部分历史段落仍写“未来/无表”，以主规格、0003、实际代码及 [M2 Verify](../2026-11-14-implement-cloud-session-asset-foundation/verification.md) 定位真实能力，不在本轮改写历史。
 - Apply 预计触及云端模型、新增 0004（不改 0001–0003）、存储适配模块、worker/清扫 CLI、API/schema、双后端与真实对象存储集成测试、依赖锁、CI、部署说明及正式领域/契约文档；均是后续实施任务。计划新增 10 个 HTTP 操作（含原契约 M3 五项），已有 47 个操作只做明确列出的增量/修复。
 - 直接复用 [P1 分片上传与完整性校验](https://app.notion.com/p/410f602574aa8129ab07d088ad80aa5b)；关联 [P0 媒体权限](https://app.notion.com/p/410f602574aa811094bec51f53fe50e3)、[数据模型](https://app.notion.com/p/410f602574aa811bbad3c6e452a065b6)、[接口架构](https://app.notion.com/p/410f602574aa816582ccc14817ce4601)、[RBAC](https://app.notion.com/p/410f602574aa816e87dcd70f56c4100e)。[隐私/保留/删除](https://app.notion.com/p/410f602574aa8121a9e4c5cfcb5131d2)与[首版范围](https://app.notion.com/p/410f602574aa8180b6c5c589e2117b01)是待决输入，不能把本 Change 当作这些总体任务完成；不创建重复任务，不改任何状态、负责人或日期。
 - Apply 验收须通过完整 SQLite、PostgreSQL 与真实隔离存储集成；所有 CI 结果绑定最终实际 Head。生产供应商/区域、隐私与监护人同意、保留/备份/删除政策仍未冻结，生产媒体存储保持禁用。

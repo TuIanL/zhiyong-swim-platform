@@ -8,15 +8,15 @@
 
 | 输入 | 本次核对结果与处理 |
 | --- | --- |
-| [五份主规格](../../specs/) | `cloud-training-session` 5、`cloud-media-asset` 8、`cloud-media-authorization` 10、`cloud-edge-registry` 7、`cloud-identity` 10 项；本提案不修改这些文件 |
+| [五份主规格](../../../specs/) | `cloud-training-session` 5、`cloud-media-asset` 8、`cloud-media-authorization` 10、`cloud-edge-registry` 7、`cloud-identity` 10 项；本提案不修改这些文件 |
 | Registry身份范围冲突 | `Independent revocable edge credentials` 仍称“只授权所属Node的heartbeat”，与M2已实现的Edge上传意图不一致；本Change新增同名完整MODIFIED增量，明确heartbeat及所属节点上传范围，不改变凭据生命周期或扩大用户权限 |
-| [M2 归档](../archive/2026-11-14-implement-cloud-session-asset-foundation/) | proposal/design/tasks/specs/verification/.openspec.yaml 齐全；28/28 是 M2 历史，Verify 的 W1–W4 与 S1 未因合并关闭 |
-| [媒体源码](../../../services/cloud/src/swimplatform/media.py) | 意图三对象单事务；cancel 与 create 共用 scoped Session 锁；`_assert_intent_allowed` 在幂等查找前拒绝 cancelled；`_materialize_expiry` 与 abort 仅处理 uploading；`confirmed_parts=[]`；没有 complete、存储或 ready 路径 |
-| [授权定义](../../../services/cloud/src/swimplatform/media_access.py) | SQL 谓词用于列表，`can_read_asset/session` 与 `can_manage_session` 用于单资源，外层必须同时执行 `_scope/site_access`；不能只调用不含 Site 检查的内部函数就认为完成授权 |
-| [模型](../../../services/cloud/src/swimplatform/models.py)、[0003](../../../services/cloud/src/swimplatform/migrations/versions/20261112_0003_cloud_session_asset.py)、[请求模型](../../../services/cloud/src/swimplatform/schemas.py) | 15 表；ready CHECK 只保证部分字段非空，不证明真实字节；失败词表已含 upload_failed/validation_failed；上传声明 SHA/大小与采集元数据存在；Asset 没有对象引用或独立验证字段 |
-| [正式领域模型](../../../docs/architecture/cloud-capture-media-domain.md)、[契约](../../../docs/contracts/cloud-capture-media.md)、[ADR 0003](../../../docs/decisions/0003-capture-media-domain-contracts.md) | D1–D10/C1–C5 约束继续适用。部分历史段落仍写“无表/未来”，与 M2 已实现事实冲突；以主规格、迁移、路由和 M2 Verify 为准。原契约 M3 五项为 User/Edge part-urls、User/Edge complete、User playback-url，本次另补 User/Edge 确认与查询、User download-url 五项 |
-| [PostgreSQL 并发测试](../../../services/cloud/tests/test_postgresql_media.py) | 已有 `ControlledRace`、两个业务 PID 与第三监控 PID、实际 Lock/wait_event/pg_blocking_pids 证据；复用此强度，不能降为线程到达事件 |
-| [配置](../../../services/cloud/src/swimplatform/config.py)、[CI](../../../.github/workflows/ci.yml) | 无 Storage/worker 配置，现有两个数据库 job 不含真实存储；Apply 必须增量补齐，不能以现有 CI 成功声称媒体已验收 |
+| [M2 归档](../2026-11-14-implement-cloud-session-asset-foundation/) | proposal/design/tasks/specs/verification/.openspec.yaml 齐全；28/28 是 M2 历史，Verify 的 W1–W4 与 S1 未因合并关闭 |
+| [媒体源码](../../../../services/cloud/src/swimplatform/media.py) | 意图三对象单事务；cancel 与 create 共用 scoped Session 锁；`_assert_intent_allowed` 在幂等查找前拒绝 cancelled；`_materialize_expiry` 与 abort 仅处理 uploading；`confirmed_parts=[]`；没有 complete、存储或 ready 路径 |
+| [授权定义](../../../../services/cloud/src/swimplatform/media_access.py) | SQL 谓词用于列表，`can_read_asset/session` 与 `can_manage_session` 用于单资源，外层必须同时执行 `_scope/site_access`；不能只调用不含 Site 检查的内部函数就认为完成授权 |
+| [模型](../../../../services/cloud/src/swimplatform/models.py)、[0003](../../../../services/cloud/src/swimplatform/migrations/versions/20261112_0003_cloud_session_asset.py)、[请求模型](../../../../services/cloud/src/swimplatform/schemas.py) | 15 表；ready CHECK 只保证部分字段非空，不证明真实字节；失败词表已含 upload_failed/validation_failed；上传声明 SHA/大小与采集元数据存在；Asset 没有对象引用或独立验证字段 |
+| [正式领域模型](../../../../docs/architecture/cloud-capture-media-domain.md)、[契约](../../../../docs/contracts/cloud-capture-media.md)、[ADR 0003](../../../../docs/decisions/0003-capture-media-domain-contracts.md) | D1–D10/C1–C5 约束继续适用。部分历史段落仍写“无表/未来”，与 M2 已实现事实冲突；以主规格、迁移、路由和 M2 Verify 为准。原契约 M3 五项为 User/Edge part-urls、User/Edge complete、User playback-url，本次另补 User/Edge 确认与查询、User download-url 五项 |
+| [PostgreSQL 并发测试](../../../../services/cloud/tests/test_postgresql_media.py) | 已有 `ControlledRace`、两个业务 PID 与第三监控 PID、实际 Lock/wait_event/pg_blocking_pids 证据；复用此强度，不能降为线程到达事件 |
+| [配置](../../../../services/cloud/src/swimplatform/config.py)、[CI](../../../../.github/workflows/ci.yml) | 无 Storage/worker 配置，现有两个数据库 job 不含真实存储；Apply 必须增量补齐，不能以现有 CI 成功声称媒体已验收 |
 
 Notion 的分片任务为「待确认」，验收原文为「上传中断可续传；校验失败不标记 cloud_available；本地原件按策略保留」。`cloud_available` 是产品描述，本实现映射为 **Asset.ready 且存在精确已验证对象**，不额外发明一个可绕过状态机的布尔字段。隐私和首版范围为人工决策输入，部分总体任务摘要仍停留 PR #3 时代；只追加本轮事实，不改它们的属性。
 

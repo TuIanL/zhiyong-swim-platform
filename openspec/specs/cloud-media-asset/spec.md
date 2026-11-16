@@ -20,6 +20,10 @@
 - **WHEN** 同一已认证主体使用同一 Idempotency-Key 与相同参数重试创建上传意图
 - **THEN** 服务 MUST 返回同一 asset_id 与同一 upload_session_id，而不是新建第二个逻辑资产
 
+#### Scenario: Different cameras keep identities through verification
+- **WHEN** 两台同节点或不同合法节点的摄像头用不同键提交相同 SHA-256/大小，随后各自通过完整对象校验
+- **THEN** 两个 asset_id 与 upload_session_id MUST 不同，各自来源设备、采集时间、授权与对象绑定 MUST 保留，不得因验证摘要相同合并身份或拒绝创建
+
 ### Requirement: Asset scope and source pairing
 
 Asset 的 tenant_id、site_id、session_id MUST 由已校验的父 Session 决定且创建后不可改；origin 为 edge 时节点与设备来源 MUST 同时存在且属于该场馆与认证节点，manual 时二者 MUST 为空，derived 时 MUST 存在同租户/场馆/会话的父 Asset。
@@ -73,9 +77,13 @@ Asset 的 tenant_id、site_id、session_id MUST 由已校验的父 Session 决�
 - **WHEN** 请求同时提供 capture_started_at_utc 与 capture_ended_at_utc 且开始晚于结束
 - **THEN** 服务 MUST 返回 422 且不创建记录
 
+#### Scenario: Valid UTC offset and IANA capture metadata
+- **WHEN** 调用者分别提交合法 utc、offset 与 iana_timezone（含有效 IANA 名称）的采集元数据与显式带时区 UTC 字段
+- **THEN** 三类请求 MUST 均被接受，读取保留原始设备时间字面值及基准/时区/偏移，UTC 字段按绝对瞬间往返；服务端 received_at MUST 不得替代采集时间，unknown 仍不得生成 UTC
+
 ### Requirement: Declared media metadata is not verified metadata
 
-上传意图中的 media_type、expected_size_bytes 与 expected_sha256 SHALL 被视为未经验证的声明值；Asset 的 checksum_sha256 MUST 在服务端完成整对象校验前保持为空，系统 MUST NOT 以任何响应把声明值呈现为已确认。
+上传意图中的 media_type、expected_size_bytes 与 expected_sha256 SHALL 被视为未经验证的声明值；Asset 的 checksum_sha256 MUST 在服务端完成整对象校验前保持为空，系统 MUST NOT 以任何响应把声明值呈现为已确认。声明值 MUST 保留于 UploadSession；实际大小、实际媒体类型、整对象摘要及验证时间 SHALL 作为独立验证结果，仅在成功最终提交时暴露为已验证值。
 
 #### Scenario: Intent response before any bytes
 
@@ -86,6 +94,10 @@ Asset 的 tenant_id、site_id、session_id MUST 由已校验的父 Session 决�
 
 - **WHEN** expected_sha256 不是 64 位小写十六进制，或 expected_size_bytes 不是正整数
 - **THEN** 服务 MUST 返回 422 且不创建记录
+
+#### Scenario: Verified values and original declaration remain separate
+- **WHEN** 完整对象验证成功并提交 ready
+- **THEN** Asset MUST 返回服务端实际 verified_size_bytes、verified_media_type、verified_at 与 checksum_sha256，原 expected_size_bytes、expected_sha256 与声明 media_type MUST 仍可从原 UploadSession 读取；失败和待验证 Asset 的验证字段 MUST 保持为空
 
 ### Requirement: Intent creates asset and upload session together
 
@@ -103,7 +115,7 @@ Asset 的 tenant_id、site_id、session_id MUST 由已校验的父 Session 决�
 
 ### Requirement: Upload session terminal states pair with asset failure
 
-UploadSession 的每个终态 MUST 在同一事务内与该 Asset 的状态配对：aborted、expired 与 failed 均对应 Asset.failed；终态不可逆，终结后重试 MUST 创建新的 Asset 与 UploadSession 而不是复活旧记录。
+UploadSession 的每个终态 MUST 在同一事务内与该 Asset 的状态配对：aborted、expired 与 failed 均对应 Asset.failed；终态不可逆；同键同参重放 MUST 返回原记录的当前终态而不复活。需要重新传输时 MUST 使用新键创建新的 Asset 与 UploadSession，并重新满足当前 Session 状态与授权约束。
 
 #### Scenario: Abort pairs both sides
 
@@ -141,14 +153,36 @@ UploadSession 的 expires_at SHALL 只由服务端按签发时刻与既定上限
 
 ### Requirement: No ready without whole-object verification
 
-本切片 MUST NOT 提供任何能把 VideoAsset 置为 ready 的操作；经创建、读取、中止或过期路径得到的 Asset 状态 MUST 仅为 pending_upload 或 failed，ready 只允许在服务端完成整对象 bytes、SHA-256 与媒体元数据校验后由后续能力产生。
+VideoAsset SHALL 仅在服务端对绑定的不可变完整对象完成实际大小、整对象 SHA-256 与媒体类型校验后进入 ready，并与 UploadSession.completed 同事务提交。pending_upload 与 failed 的 checksum_sha256 及验证字段 MUST 为空；客户端声明、分片回执和物理合并不能直接产生 ready。
 
 #### Scenario: Every reachable status
+- **WHEN** 调用方仅创建、读取、中止、过期上传或校验未成功
+- **THEN** Asset MUST 仅为 pending_upload 或 failed，checksum_sha256 与验证字段 MUST 为空
 
-- **WHEN** 调用方遍历本切片全部公开操作后再次读取任一 Asset
-- **THEN** 其 status MUST 为 pending_upload 或 failed，且 checksum_sha256 MUST 为 null
+#### Scenario: Completion operation requires successful verification
+- **WHEN** 调用方对上传会话提交完成请求
+- **THEN** 校验中 MUST 返回 202 且 Asset 仍 pending_upload，只有整对象验证与最终事务成功才允许返回 200 completed/ready
 
 #### Scenario: No completion operation is exposed
+- **WHEN** 调用方尝试直接提交 ready 状态、checksum 或存储引用，要求不经服务端整对象验证就完成上传
+- **THEN** 服务 MUST 不存在接受该旁路的公开操作，相关不可写字段 MUST 返回 422，Asset MUST 不因该尝试变为 ready；本场景延续 M2 的无直接完成旁路保证，合法 complete 按上一个场景执行
 
-- **WHEN** 调用方尝试对上传会话提交完成请求
-- **THEN** 服务 MUST NOT 存在可接受该请求的公开操作，Asset MUST 不因该尝试变为 ready
+#### Scenario: Ready is bound to an immutable physical identity
+- **WHEN** Asset 被提交为 ready 或用于访问 URL 签发
+- **THEN** 数据库 MUST 存在同 tenant/site/session/asset 的精确已验证存储引用、验证字段与 completed 上传，且后续不得用同 key 的其他版本替换原对象或覆盖采集来源
+
+### Requirement: Existing intent replay precedes new intent state checks
+
+上传意图重试 SHALL 在重新确认当前身份、资源权限与主体作用域后检查既有幂等记录。同主体/作用域/键且摘要相同时 MUST 返回原 Asset/UploadSession 的当前状态；不同摘要 MUST 返回 409 idempotency_conflict。只有不存在记录的新请求才应用 cancelled 禁止新建等状态约束，User 与 Edge MUST 一致。
+
+#### Scenario: Cancelled session returns original terminal pair
+- **WHEN** 原主体成功创建意图后 Session 被取消，再以同键同参重试
+- **THEN** 服务 MUST 返回 201 与原两个 ID 的 failed/session_cancelled 当前终态，不创建新记录、不复活、不覆盖原因或首次时间
+
+#### Scenario: New key and conflicting key after cancellation
+- **WHEN** 有权原主体在 cancelled Session 上用新键，或用原键不同摘要提交
+- **THEN** 新键 MUST 返回 409 state_conflict，原键异参 MUST 返回 409 idempotency_conflict，两者均无新增记录
+
+#### Scenario: Replay cannot bypass current authorization
+- **WHEN** 用户已失去当前成员/场馆/资源管理权限，或 Edge 凭据已过期/撤销，再重放原键
+- **THEN** 服务 MUST 按当前身份与可见性拒绝访问，不得从幂等缓存返回越权资源或签名 URL

@@ -28,7 +28,7 @@ V1 是实际权限期限越界，属于 CRITICAL。V2 的 CI 没有在 RustFS �
 ### Pull request 与源码状态
 
 - PR 当前 open、draft=true、mergeable=true；head 为 ba2216b058ebcbf3b51d59fcd80d6f073ad36961，base main 为 3352c6b17b2dd3b6921028b25606a999bb69b331。本轮没有改变 PR 状态、main 或业务源码。
-- Apply 报告 [cloud-media-upload-transfer-apply.md](../../../docs/verification/cloud-media-upload-transfer-apply.md) 仍写 Apply head b2ccced661083967f9ef4fabb27282abba9270e3、CI 43605429270。PR 正文、CI artifact metadata 和 Notion 已引用较新的 ba2216b / 43606071954。旧报告没有给出最后一个提交的完整测试证据，任务 10.3 的最终证据链不完整；这是报告可追溯性问题，不会把旧 run 冒充新 run。
+- Apply 报告 [cloud-media-upload-transfer-apply.md](../../../../docs/verification/cloud-media-upload-transfer-apply.md) 仍写 Apply head b2ccced661083967f9ef4fabb27282abba9270e3、CI 43605429270。PR 正文、CI artifact metadata 和 Notion 已引用较新的 ba2216b / 43606071954。旧报告没有给出最后一个提交的完整测试证据，任务 10.3 的最终证据链不完整；这是报告可追溯性问题，不会把旧 run 冒充新 run。
 - 变更相对 main 只新增迁移 services/cloud/src/swimplatform/migrations/versions/20261114_0004_cloud_media_transfer.py；0001–0003 历史迁移未改写。当前 schema 为 19 张业务表。
 - CI logs 的 checkout 为 PR 合并临时 ref，不能将 merge ref SHA 当成 Apply code head。PR 元数据及两个 artifact 的 workflow_run.head_sha 明确绑定固定 head。
 
@@ -211,7 +211,7 @@ RustFS 15 个通过的存储场景包括完整上传/断点恢复/私有 Range�
 
 ## M2 Verify W1–W4 独立复核
 
-依据 [M2 verification.md](../archive/2026-11-14-implement-cloud-session-asset-foundation/verification.md) 和 M3 实际代码/测试：
+依据 [M2 verification.md](../2026-11-14-implement-cloud-session-asset-foundation/verification.md) 和 M3 实际代码/测试：
 
 | 原 Warning | 本次独立证据 | 结论 |
 | --- | --- | --- |
