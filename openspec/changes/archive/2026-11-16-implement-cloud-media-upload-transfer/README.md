@@ -1,4 +1,10 @@
-# M3 Propose 交接与检查记录
+# M3 Propose 交接与检查记录（历史快照）
+
+**历史说明（2026-11-17 补充）：** 以下正文保留 2026-11-14 Propose 阶段的原始记录；其中的 `0/42`、待 Apply 等数字和结论只反映当时状态，不代表当前状态。M3 现已完成 Apply **42/42**、两轮独立 Verify，并于 2026-11-16 正式 Archive、同步六份主规格。
+
+- 当前正式 [Apply 报告](../../../../docs/verification/cloud-media-upload-transfer-apply.md) 与 [Post-Verify Remediation 报告](../../../../docs/verification/cloud-media-upload-transfer-remediation.md)。
+- 两轮独立审计：[首次 Verify](verification.md)；[第二轮 Post-Remediation Verify](remediation-verification.md)。
+- 正式 Archive 位于本目录；[归档 Tasks（42/42）](tasks.md)、[归档元数据](.openspec.yaml)；已同步的[新增 cloud-media-transfer 主规格](../../../specs/cloud-media-transfer/spec.md)。
 
 日期：2026-11-14。阶段：**Explore + Propose，待负责人审阅；未 Apply**。
 
