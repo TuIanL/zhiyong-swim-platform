@@ -1,6 +1,6 @@
 # Proposal
 
-**M4.1 · Cloud–Edge Reliable Synchronization · 二轮 Propose · 待负责人签认**
+**M4.1 · Cloud–Edge Reliable Synchronization · 负责人签认 · 纯文档 Apply**
 
 ## Why
 
@@ -10,8 +10,9 @@ M3 合并后，已登记的节点可以使用受限身份传输媒体，云端�
 
 - 以纯文档契约记录方向、信封、角色与范围、任务生命周期、ACK、冲突、重试、重连和安全停止。把原 R1–R8 及 19 个 Scenario 移至 [候选行为契约与样例](candidate-contract.md)，保留 ID 和追溯，另补任务控制、凭据及 PostgreSQL 验收向量。
 - 继承负责人已批准的本地优先与有效身份边界。已业务接单的任务可在一般断网或自然过期时继续本地执行，原片默认留场馆。云端凭据受服务端截止及撤销约束，媒体传输继续走 M3。
-- 推荐一个 Session 在整个 v1 生命周期最多一个任务，每个任务固定一个节点、一次分配，终态也占用名额。创建与指派原子提交。Q1 待签认，选择活动任务唯一的替代方案时须先修改契约及其验收。
-- 审阅 [Q1–Q7 决策表](design.md#decision-signoff)。后续由 M4.2、M4.3 分别提出范围内的行为 Delta，M4.4 验收真实双端收敛。实际能力以实施验收证据为准。
+- Q5=B 为 M4.4 新增必验上传分支。批准绑定 Session、具体资产、目的和当前授权，复用 M3。原片默认留场馆，自动上传和自动删除不属于此链路。
+- 已批准一个 Session 在整个 v1 生命周期最多一个任务，每个任务固定一个节点、一次分配，终态也占用名额。创建与指派原子提交。对应 Q1=A。
+- 依据 [Q1–Q7 决策签认](design.md#decision-signoff)。后续由 M4.2、M4.3 分别提出范围内的行为 Delta，M4.4 验收真实双端收敛。实际能力以实施验收证据为准。
 
 ## Capabilities
 
@@ -28,7 +29,9 @@ M3 合并后，已登记的节点可以使用受限身份传输媒体，云端�
 | 范围 | M4.1 文档交付 | 后续影响 |
 | --- | --- | --- |
 | 数据库及 API | 任务控制、同步路由、数据与锁序设计 | M4.2 独立 Edge 持久化；M4.3 增量 Cloud 任务、日志、Inbox 和投影。迁移与业务入口在实施 Change 审查 |
-| 媒体 | 记录 M3 传输、权限、验证和既有状态边界 | 合成闭环验证元数据；获准的媒体传输复用 M3 |
+| 媒体 | 记录 M3 传输、权限、验证和既有状态边界 | M4.4 同时验收元数据与单独经人工批准的合成 MP4 上传，沿用 M3 |
 | 验收 | 决策表、候选行为、协议样例、两层矩阵 | 后续以各切片的测试、运行证据和实现验收判定满足 |
 
 原始评审 Head 为 `b2bb18313d9fc1b66d85ee391b8e11aee23bff1d`。基线为 `main@94fed6b03d50ccca52f6ec959bcde1636148c65c`，合并后 main CI 三项通过。[Draft PR #7](https://github.com/TuIanL/zhiyong-swim-platform/pull/7) · [PR #6](https://github.com/TuIanL/zhiyong-swim-platform/pull/6) · [main CI](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/44220297894)
+
+业务签认对应 [二轮 Propose Head](https://github.com/TuIanL/zhiyong-swim-platform/commit/a26d0065ff0a6f3c9925292176d4a4e33c4d1d6b)。批准序列为 Q1=A、Q2=A、Q3=A、Q4=A、Q5=B、Q6=A、Q7=A。

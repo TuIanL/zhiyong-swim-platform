@@ -1,6 +1,6 @@
 # Design
 
-**M4.1 · 二轮 Propose · 纯文档契约 · 待负责人签认**
+**M4.1 · 负责人签认记录 · 纯文档 Apply**
 
 ## Context
 
@@ -10,7 +10,7 @@
 - 合并后 main Push CI Run `44220297894` 的三个 Job 全部成功。原始日志的 checkout SHA 和两份 artifacts 元数据均与合并 SHA 一致。SQLite **210 passed / 92 skipped**，PG17 **281 passed / 21 skipped**，PG 专用实例清理为 `removed`。隔离 RustFS 使用 **ffprobe 6.1.1**，验收和精确清理成功。此结果更新了 Notion 新版入口中 RustFS 仍在运行的时间截面。[main CI](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/44220297894) · [PG 证据](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/44220297894/artifacts/14389754072) · [RustFS 证据](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/44220297894/artifacts/14390244558)
 - 基线含 144 个受跟踪路径。服务树只有 `services/cloud`，包括一个 Python 3.13/FastAPI 包、SQLAlchemy/Alembic、SQLite/PG17/RustFS 测试和合成 MP4。真正的迁移位于包内，`services/cloud/migrations` 是兼容符号链接，版本为 0001–0004。其余目录为 `.github` CI、`configs`、`scripts`、`docs`、`openspec` 和 `var/.gitkeep`。模型 **19 表**，OpenAPI 快照 **43 paths / 57 operations**（含健康/就绪）。Pose 配置仅记录默认选型。[目录树](https://github.com/TuIanL/zhiyong-swim-platform/tree/94fed6b03d50ccca52f6ec959bcde1636148c65c) · [应用入口](../../../services/cloud/src/swimplatform/main.py) · [模型](../../../services/cloud/src/swimplatform/models.py) · [OpenAPI](../../../docs/contracts/openapi.json)
 - 规划前活动 Change 为 0。主规格有 `cloud-identity`、`cloud-edge-registry`、`cloud-training-session`、`cloud-media-asset`、`cloud-media-authorization`、`cloud-media-transfer` 共 6 份。M1/M2/M3 分别对应 PR #4/#5/#6 的 Registry、Session/Asset、Media Transfer 实施归档。此前 PR #3 的领域契约已约定 D4/D10，允许 Edge 保存临时本地记录，正式 Session 的接纳、ID 映射和冲突规则由后续 Change 界定。[主规格](../../specs/) · [M1 归档](../archive/2026-11-11-implement-cloud-edge-device-foundation/) · [M2 归档](../archive/2026-11-14-implement-cloud-session-asset-foundation/) · [M3 归档](../archive/2026-11-16-implement-cloud-media-upload-transfer/) · [ADR 0003](../../../docs/decisions/0003-capture-media-domain-contracts.md)
-- Notion 项目明确本地优先和统一云端权威。同步 P1 要事务队列、ACK、去重、退避及冲突记录，验收看断网不丢失、重复投递无重复记录及恢复后收敛。部署包 P1 要可重复安装、健康检查、重启及无公网可用，目标 GPU 工作站验证另由负责人安排。07 是草案，内含指令版本、有效期、签名或校验线索。以下契约提议只覆盖一类任务，拟以在线认证/TLS、归属和版本校验约束下发，任务有效期及是否需要独立签名见 Q4。[项目](https://app.notion.com/p/410f602574aa816ea4a6f2b06985d412) · [同步 P1](https://app.notion.com/p/410f602574aa8181a19ae87e25b62b4d) · [Edge 部署包 P1](https://app.notion.com/p/410f602574aa81608463d9de3e26368a) · [07 协议](https://app.notion.com/p/410f602574aa81cda7bff8c3ed483f4d) · [04 Runtime 设计](https://app.notion.com/p/410f602574aa8142a2ecde4eb3a6872a) · [新版工程入口](https://app.notion.com/p/410f602574aa81288834cc297ae5b039)
+- Notion 项目明确本地优先和统一云端权威。同步 P1 要事务队列、ACK、去重、退避及冲突记录，验收看断网不丢失、重复投递无重复记录及恢复后收敛。部署包 P1 要可重复安装、健康检查、重启及无公网可用，目标 GPU 工作站验证另由负责人安排。07 是草案，内含指令版本、有效期、签名或校验线索。v1 签认范围为单一合成任务类型，Q4 决定以有效身份的 HTTPS/TLS 拉取与版本校验下发。[项目](https://app.notion.com/p/410f602574aa816ea4a6f2b06985d412) · [同步 P1](https://app.notion.com/p/410f602574aa8181a19ae87e25b62b4d) · [Edge 部署包 P1](https://app.notion.com/p/410f602574aa81608463d9de3e26368a) · [07 协议](https://app.notion.com/p/410f602574aa81cda7bff8c3ed483f4d) · [04 Runtime 设计](https://app.notion.com/p/410f602574aa8142a2ecde4eb3a6872a) · [新版工程入口](https://app.notion.com/p/410f602574aa81288834cc297ae5b039)
 
 ### 已批准边界、待决设计与实施状态
 
@@ -18,7 +18,7 @@
 | --- | --- |
 | 已批准的既有边界 | 本地优先，已业务接单的任务可离线继续，原片默认留场馆，获准传输沿用 M3。Session 最终状态及离线临时记录继承 ADR 0003 D4/D10。D12 的服务端 UTC、7 天默认/30 天上限、撤销不可恢复、受控签发及禁止自动续期已批准。[ADR 0003](../../../docs/decisions/0003-capture-media-domain-contracts.md) · [Notion 决策记录](https://app.notion.com/p/410f602574aa81618d05efd317151022) · [Registry 主规格](../../specs/cloud-edge-registry/spec.md) |
 | 本轮明确的交付边界 | M4.1 为纯文档契约，沿用 `skip_specs: true`。候选需求、样例和矩阵随 Change 留存。后续 M4.2/M4.3 分别起草并审查行为 Delta。[纯文档先例](../archive/2026-11-10-define-cloud-capture-media-contracts/proposal.md) |
-| 待签认的候选 | 下文任务、协议、终态和本地安全停止均为推荐版本。Q1–Q7 逐条由负责人决定，选择备选方案先修改相关章节、样例与矩阵。 |
+| 已批准的 M4 v1 设计方向 | Q1=A、Q2=A、Q3=A、Q4=A、Q5=B、Q6=A、Q7=A。实施参数和外部政策的待决边界见签认表。 |
 | 实施满足 | 文档签认和 OpenSpec strict 证明可评审与结构正确。M4.2/M4.3 各自凭实现和对应的测试证据判断所负责条款是否满足，双向同步的系统行为由 M4.4 验收。 |
 
 ### 现有能力和缺口
@@ -34,7 +34,7 @@
 
 ## Goals / Non-Goals
 
-候选契约描述一条可复核的闭环。Cloud 为已有 Session 分配一个 TrainingTask 给一个 Node，Edge 持久接收命令并业务接单后可离线记录合成采集事实和执行终态，重连后更新 Cloud 的独立任务视图。M4.1 交付仅为可评审、可逐场景走读的契约。真实摄像头、算法执行、分析结果摄取、报告发布、权限/配置/模型分发、离线自建 Session 的正式接纳、节点转移及生产选型均留给对应领域 Change。
+签认契约描述一条可复核的闭环。Cloud 为已有 Session 分配一个 TrainingTask 给一个 Node，Edge 持久接收命令并业务接单后可离线记录合成采集事实和执行终态，重连后更新 Cloud 的独立任务视图。M4.1 交付仅为可评审、可逐场景走读的契约。真实摄像头、算法执行、分析结果摄取、报告发布、权限/配置/模型分发、离线自建 Session 的正式接纳、节点转移及生产选型均留给对应领域 Change。
 
 ## Decisions
 
@@ -44,20 +44,35 @@
 | --- | --- | --- |
 | TrainingSession / TrainingTask | Cloud 持有正式 Session、任务分配与取消。Cloud 下发任务命令。Edge 持有接单、执行与产物事实，可上报接单和终态 | 独立的任务视图从事实推进。Session 的 `status`、标题、创建者以及授权继续由 Cloud 现有操作维护。离线临时 Session 可留本地，接纳需要独立的来源核验和显式 ID 映射 |
 | 采集事实 | Edge 生成稳定 `capture_id`，上行所属 Camera、采集时间及最小元数据。Cloud 校验 Tenant/Site/Node、分配、Session 和设备来源 | 入库为业务采集事实，保留原始设备时间与 Cloud 接收时间。未知时钟数据保持未知。本地路径、媒体 URL、原片、图像帧和个人标识均在 v1 白名单外 |
-| 上传状态 | Edge 权威仅含本地文件存在性、待传及发送进度。M3 Cloud 持有 UploadSession 状态和对象已验证/可访问事实 | 事件 ACK 与媒体完成、读取授权各走独立状态。Cloud `completing`、已传分片和 Edge 报称上传成功均不足以发布。只有明确授权的媒体走 M3；仍未决定授权策略时，合成闭环只验证元数据。后续若获准传输，同一采集与同一上传尝试持久关联 M3 返回的 asset/upload ID，超时复用原意图键和传输流程 |
+| 上传状态 | Edge 权威仅含本地文件存在性、待传及发送进度。M3 Cloud 持有 UploadSession 状态和对象已验证/可访问事实 | 事件 ACK 与媒体完成、读取授权各走独立状态。Cloud `completing`、已传分片和 Edge 报称上传成功均不足以发布。原片默认本地。Q5 B 将显式人工批准的合成视频 M3 上传纳入 M4.4 必验路径。审批绑定 Session、具体资产、目的和现行授权。复用原意图键和 M3 的 asset/upload ID |
+| 人工上传批准 | M4.4 测试操作人在事件流之外对具体 Session、合成视频及目的做出显式批准，发起主体须通过 M3 当前授权 | 记录批准与资产绑定，事件 ACK、接单或终态均不生成批准。生产审批人、隐私、保留策略另审 |
 | 分析执行 | 未来由 Cloud 分派方固定 `analysis_task_id` 和输入 ID/revision，执行该分配的 Edge 持有运行、失败与成功事实 | M4 v1 的 `training_task.finished` 只表示最小训练工作项结束。未来分析状态须按执行 ID 校验及投影，分析调度、服务身份、输入不可变性与重跑另议 |
 | 报告结果 | Edge 保有生成事实及本地版本。未来允许经许可、脱敏且有来源的候选结果上行。Cloud 权威持有接纳、发布版本与云端读权 | 后续绑定输入 revision、pipeline/model/rule/schema 版本与发布授权。v1 无报告内容、结果写入、自动公开权限或派生媒体创建 |
 | 节点与权限 | Cloud 下发或管理员配置归属、授权和期望值，Edge 仅能报告观察值 | 现有 `EdgeCredential` 与 User 角色互斥；未来的权限快照、配置或模型分发各有独立契约，保持默认拒绝 |
 
+#### Q5 B 的独立媒体链路
+
+```text
+Edge 原片 + 采集事实
+  |-- M4 事件 Outbox --> Cloud Inbox/收据 --> 采集/任务投影
+  +-- 人工明确批准具体 Session、资产与目的
+      --> 现有 M3 授权 --> UploadSession / pending_upload
+      --> 分片与续传 --> completing --> M3 整对象验证 --> ready
+```
+
+每次合成测试批准先绑定待传本地资产的稳定标识、预期 SHA-256 与大小、Tenant/Site/Session、上传目的和当前授权主体。M3 新建上传意图原子分配云端 Asset ID 后，将返回的 `asset_id`/`upload_session_id` 与这次批准及同一原件绑定。隔离测试可以用具有当前 S-manage 的 User 通过用户侧 M3 API 明确发起，其同一发起身份继续上传，Edge 同步身份不获 User 令牌或额外媒体权限。当前 M3 允许的 Edge 上传路径仍遵守原发起节点及有效设备边界。授权失效阻止新的授权及正常发布，已签 URL 受原 TTL 约束。仅 M3 对精确对象版本验证 SHA-256、大小和媒体有效性后可提交 `ready`。本地原件保留。
+
+M4.4 使用隔离 RustFS、合成 MP4 与测试身份验收 M1–M6。这里的人工批准用测试编排记录和显式动作表达。真实数据审批角色及记录产品规则、采集/传输授权、未成年人监护人同意、生产存储/区域/访问控制以及保留、备份、删除、撤回与审计均需另批。[M3 接口契约](../../../docs/contracts/cloud-capture-media.md) · [验收矩阵](tasks.md)
+
 ### D2 v1 信封、流与负载
 
-以下字段名和状态为评审默认值。所有请求使用严格 JSON 对象和字段白名单，受支持的版本为整数 `schema_version=1`。建议每事件上限 8 KiB、下发页最多 50 条，数值宽度采用 JSON 安全整数范围；限额和重试预算见 Q6。上行每请求一事件，避免批次部分提交语义。
+v1 请求使用严格 JSON 对象和字段白名单，事件版本为整数 `schema_version=1`。已签认的单事件上限为 8 KiB，每个下发页最多 50 条，整数使用 JSON 安全整数范围。Q6 尚未签认具体超时和退避预算。上行每请求一事件，避免批次部分提交语义。
 
 | 字段 | 规则 |
 | --- | --- |
 | `event_id`, `type`, `schema_version` | 生产端首次原子持久化时生成 UUID。重试复用完整信封。事件 ID 在各接收账本内唯一，版本或字段变化需按兼容规则显式处理 |
 | `tenant_id`, `site_id`, `edge_node_id` | Cloud 从当前节点凭据绑定取得并逐项校验；Edge 以本机受控绑定核对下行。请求提供的值只是声明 |
-| `session_id`, `task_id`, `assignment_id` | Cloud 生成稳定 UUID。任务与 Session 分离。Q1 推荐每个 Session 整个 v1 生命周期最多一个任务、每任务固定一次分配和一个节点。终态保留名额，分配身份关联作用域及父任务 |
+| `session_id`, `task_id`, `assignment_id` | Cloud 生成稳定 UUID。任务与 Session 分离。Q1 确认每个 Session 整个 v1 生命周期最多一个任务、每任务固定一次分配和一个节点。终态保留名额，分配身份关联作用域及父任务 |
 | `task_version`, `sequence` | `task_version` 记录 Cloud 命令版本，分配为 1，首次取消为 2；上行回显生成事实时本地已应用的版本。下行 `sequence` 为节点流序号，上行 `sequence` 为分配流序号，两个方向分别从 1 开始严格递增。成功回报或 ACK 不会制造新的命令版本 |
 | `occurred_at`, `payload` | `occurred_at` 是生产方声明的 UTC 时刻，用于诊断；Cloud 单独记录 `received_at`。任务竞争、凭据截止和重放排序不取客户端墙钟。载荷只接受下表字段 |
 
@@ -69,7 +84,7 @@
 | Edge → Cloud `capture.recorded` | `capture_id`、`device_id`、可选 `captured_at_utc` 与 `device_observed_at_raw`（≤64 字符） | 每次采集一次 ID，至少记录来源。允许两个时间字段都缺省以表达未知；原始设备时间不被服务端时间填补 |
 | Edge → Cloud `training_task.finished` | `outcome=completed/failed/stopped_by_cancel` | 每个接收过的分配最多一次正常执行终态。成功/失败由 Cloud 按当前控制状态和接收顺序投影；已取消后的回报适用 D4 |
 
-接收端按已验证、规范化的不可变信封计算内容指纹。字段顺序和 JSON 空白不改变含义，重复键与未知字段拒绝，UUID 规范为小写连字符格式，UTC 时刻统一为等义的 Z 表示，可选时间字段缺失时统一省略，显式 null 拒绝。原始设备时间字符串按原值保留。规范化正反例见[候选契约样例](candidate-contract.md#协议样例)。Inbox 主键为 `event_id`，另用作用域、分配及序号做唯一约束；同序号异 ID 和同 ID 异信封均为完整性冲突。采集另按 `(tenant_id, site_id, edge_node_id, assignment_id, capture_id)` 保证同一业务事实只有一份；两个独立采集可有相同文件哈希。请求级 `Idempotency-Key` 继续服务已有管理和上传接口，独立于事件去重。
+接收端按已验证、规范化的不可变信封计算内容指纹。字段顺序和 JSON 空白不改变含义，重复键与未知字段拒绝，UUID 规范为小写连字符格式，UTC 时刻统一为等义的 Z 表示，可选时间字段缺失时统一省略，显式 null 拒绝。原始设备时间字符串按原值保留。规范化正反例见[契约样例](candidate-contract.md#协议样例)。Inbox 主键为 `event_id`，另用作用域、分配及序号做唯一约束；同序号异 ID 和同 ID 异信封均为完整性冲突。采集另按 `(tenant_id, site_id, edge_node_id, assignment_id, capture_id)` 保证同一业务事实只有一份；两个独立采集可有相同文件哈希。请求级 `Idempotency-Key` 继续服务已有管理和上传接口，独立于事件去重。
 
 ### D3 事务、传输与 ACK
 
@@ -82,7 +97,7 @@
 
 Cloud 对上行事件的收据独立于 Command ACK。上行收据只确认指定事件已投影或已记录冲突。
 
-建议采用 Edge 主动发起的 HTTPS 拉取与回报。Cloud 和 Edge 均以各自持久数据库作为队列与收据的事实源；消息队列和常驻推送服务无需成为首片依赖。
+Q4 确认 Edge 使用有效节点身份主动发起 HTTPS/TLS 拉取与回报。Cloud 和 Edge 均以各自持久数据库作为队列与收据的事实源；消息队列和常驻推送服务无需成为首片依赖。
 
 | v1 路由候选 | 请求与响应边界 |
 | --- | --- |
@@ -104,7 +119,7 @@ Cloud 对上行事件的收据独立于 Command ACK。上行收据只确认指�
 - 候选入口为 `POST /api/v1/tenants/{tenant_id}/sites/{site_id}/training-tasks`。只允许当前有效 User 会话及目标 Tenant 的 Owner/Admin。无效会话或 Edge 凭据返回 `401`。非成员、不可见 Site、越 Tenant/Site 的 Session、Node 或任务以 `404` 隐藏。同场馆可见但无管理角色的 Coach/Athlete 返回 `403`，Session/Asset 读 grant 不增加控制权限。
 - 请求含 `session_id`、`edge_node_id`、`work_kind=capture_demo` 与 `Idempotency-Key`。结构、缺键、非法键和未知字段返回 `422`。对于新写入，在锁后按已有任务、父 Session 状态、Node 状态的顺序校验。已存在任务按 `task_exists` 处理。无现存任务时要求父 Session 属于路径 Tenant/Site 且为 `planned` 或 `recording`，Node 同场馆且为 `active`。Session 已完成或取消，或可见 Node 的行政状态非 active，返回 `409 state_conflict`。心跳 `online` 只供观测。
 - 一次提交创建 `task_id`、`assignment_id`、初态 `assigned`、`task_version=1`、节点序号、`training_task.assigned` 下发记录和请求收据，成功返回 `201` 与含任务/分配标识、初态、初始版本及命令序号的收据。任何一项失败则全部回滚，禁止创建未分配的任务或单独重派。
-- Q1 推荐**整个 v1 生命周期唯一**。同 `(tenant_id, site_id, session_id)` 最多一个任务，同任务最多一个分配，均以数据库唯一约束保护。任务成为 `completed`、`failed` 或 `cancelled` 后仍占名额，任何新键再建均返回 `409 task_exists`。新训练如需另起任务应对应真实的新 Session。采用活动任务唯一须先重审 Q1、更改约束和测试，实施不得自行切换。
+- Q1 确认**整个 v1 生命周期唯一**。同 `(tenant_id, site_id, session_id)` 最多一个任务，同任务最多一个分配，均以数据库唯一约束保护。任务成为 `completed`、`failed` 或 `cancelled` 后仍占名额，任何新键再建均返回 `409 task_exists`。新训练如需另起任务应对应真实的新 Session。采用活动任务唯一须先重审 Q1、更改约束和测试，实施不得自行切换。
 - 创建和取消键都按 `(tenant_id, site_id, user_id, operation, key_digest)` 隔离。先校验当前会话、角色及请求目标可见归属，再查当前作用域收据。同键同规范化参数重放原成功状态和逻辑收据，即使节点或 Session 此后已终结；收据不是当前任务视图。同键异参（含目标、Node 或期望版本）返回 `409 idempotency_conflict`。仅在未命中成功收据时评估新操作的状态门槛。并发主键/唯一冲突应回滚并按当前授权解释为重放或冲突，收据和副作用均至多一次。创建与取消为不同 operation。
 
 #### 取消与竞争
@@ -147,13 +162,13 @@ M4.3 候选锁序以受限初验读取发现归属，先锁 `Session`，父取�
 
 D12 的有效期以 Cloud 服务端 UTC 判断，到期、撤销和停用均拒绝同步及旧收据读取。提交和收据查询前复核 Node active、凭据 generation 和作用域。曾成功的心跳和历史 ACK 不授予额外时间或范围。
 
-| 可知原因 | 本地执行和安全停止（Q3 推荐） | 队列与恢复 |
+| 可知原因 | 本地执行和安全停止（Q3 已批准） | 队列与恢复 |
 | --- | --- | --- |
 | 断网、已知自然过期，或仅收到无法区分原因的 `401` | 暂停同步，保留已业务接单任务的本地运行资格（含尚未开工的已接单任务）。待接单任务等待有效控制流。通用 401 仅视为认证失败并告警，不能推断节点停用 | 保留原片、检查点、已应用命令、Inbox/Outbox 和原事件 ID。Cloud 拒绝该凭据后的请求，等待同 Node 受控签发并按原游标对账 |
 | 已验证的人工撤销，仅针对凭据 | 停用该凭据、暂停云端同步。已接单任务继续本地运行。若撤销同时包含已验证的本地停机指令，则按下一行进入安全挂起 | 同一 Node 可用受控新凭据恢复同步。撤销不可复活，保存此期间本地生成的待发事实 |
-| 已验证的节点停用，或有权操作者明确要求安全停机 | 持久设置本地安全挂起。禁止所有新开工，含已接单未开工项。通知运行中的任务检查点停机，无法确认安全结束时保持 `safety_hold` 及待人工状态。重启继续阻止开工 | 保存检查点、原片和待发事实，不伪造任务完成/取消。仅当真正应用任务取消命令才可报 `stopped_by_cancel`。节点应完成 Registry 显式恢复、同 Node 新凭据以及有审计的本地解挂，按原执行身份续跑或人工处置 |
+| 已验证的节点停用，或有权操作者明确要求安全停机 | 持久设置本地安全挂起。禁止所有新开工，含已接单未开工项。通知运行中的任务检查点停机，无法确认安全结束时保持 `safety_hold` 及待人工状态。重启继续阻止开工 | 保存检查点、原片和待发事实，不伪造任务完成/取消。仅当真正应用任务取消命令才可报 `stopped_by_cancel`。停用节点须符合 Registry 显式恢复并使用同 Node 新凭据。重开工须另有审计的本地解挂；已终结或已取消的执行不恢复 |
 
-M4 v1 不假设断网 Edge 实时收到管理变更。可信状态来自受控的本地操作或经授权验证的管理通知，接入和审计机制由 Q3 签认；不从 401、心跳中断或未认证信号伪造状态。35 天原凭据必过期，队列绑定 Node 而非 Credential ID，迁场馆或新节点不得继承。旧媒体上传会话及短期 URL 继续受 M3 自己的有效期和授权约束。
+M4 v1 不假设断网 Edge 实时收到管理变更。可信状态来自受控的本地操作或经授权验证的管理通知，可信通知通道、现场核验、凭据安全交付和解挂审计的实现方式留 M4.2/M4.3 审查；不从 401、心跳中断或未认证信号伪造状态。35 天原凭据必过期，队列绑定 Node 而非 Credential ID，迁场馆或新节点不得继承。旧媒体上传会话及短期 URL 继续受 M3 自己的有效期和授权约束。
 
 ### D6 四个最小 Change
 
@@ -162,7 +177,7 @@ M4 v1 不假设断网 Edge 实时收到管理变更。可信状态来自受控�
 | M4.1 `define-cloud-edge-sync-contract`（本提案） | 交付候选契约、样例、决策记录和验收矩阵。文档冻结以负责人签认及 strict 验证为准 | 产物供 Edge/Cloud 分别消费，实施和部署另行决策 |
 | M4.2 `add-edge-runtime-persistence` | 隔离 CPU 环境可重复启动本地服务并通过健康检查。持久卷存储命令 Inbox、任务/采集事实及 Outbox。用确定性合成执行器和测试契约对端验收无公网执行、重启恢复、崩溃事务、退避和取消。持久化产物用临时目录和故障注入验证 | M4.1 文档签认后，先在实施 Change 声明本地行为 Delta，再验收 Runtime 最小部署包，Notion P1 的目标工作站、GPU/驱动和实机交付待独立现场验收 |
 | M4.3 `add-cloud-sync-inbox-and-projection` | 云端最小授权分配/取消入口、按节点下发日志与 ACK、持久 Inbox、采集和任务窄投影。用协议测试客户端和 PG17 验收归属、重复、并发、Session 取消、凭据与对账。现有 Node/Session 和媒体回归覆盖 | M4.1 文档签认后声明 Cloud 行为 Delta，可和 M4.2 并行。分配必须经正式 Cloud 写入入口，验收时不直接造 Inbox 或投影状态 |
-| M4.4 `verify-cloud-edge-sync-end-to-end` | 两个真实服务进程、各自持久卷、真实 HTTP、可控网络故障。提交前后崩溃、掉线、丢响应、重放、乱序、取消与完成、35 天到期及同节点 reissue 的全链路收敛。合成素材及 M3 隔离媒体回归提供证据 | M4.2 + M4.3；真实指同步双方和持久化，采集/执行使用合成夹具 |
+| M4.4 `verify-cloud-edge-sync-end-to-end` | 两个真实服务进程、各自持久卷、真实 HTTP、可控网络故障。提交前后崩溃、掉线、丢响应、重放、乱序、取消与完成、35 天到期及同节点 reissue 的全链路收敛。另以隔离 RustFS 必验人工批准的合成 MP4 经现有 M3 完成上传、续传、校验及撤权检查（M1–M6） | M4.2 + M4.3；真实指同步双方和持久化，采集/执行使用合成夹具 |
 
 ## Risks / Trade-offs
 
@@ -185,23 +200,23 @@ M4 v1 不假设断网 Edge 实时收到管理变更。可信状态来自受控�
 
 - **M4.1** 使用固定合并 SHA、OpenSpec strict、信封正反例走读和逐场景矩阵。Git 差异只应位于本 Change。评审环境无需数据库、容器或视频连接，现有 CI 仅作为 M1–M3 基线证据。
 - **M4.2 / M4.3** Edge 使用临时独立文件库和可重启普通 CPU 进程，Cloud 使用现有隔离 SQLite 套件和专用 PG17 实例。两端用同一合成契约向量，PG 竞态用独立连接，以可注入 UTC 时钟演练到期。用失败注入检查提交前无半条状态、提交后重投仍同收据。
-- **M4.4** 每次运行使用专用网络和命名卷。断开 Cloud–Edge 链路、丢弃提交后响应、停止并重启进程，测试保留同一持久卷。用 Cloud API 和两边只读数据库断言收敛、计数、状态不回退及没有未授权媒体。观察真实同步过程中没有上传行为；另行获准的合成媒体路径复用现有 RustFS 隔离测试。场馆硬件和学员资料不进入此环境。
+- **M4.4** 每次运行使用专用网络和命名卷。断开 Cloud–Edge 链路、丢弃提交后响应、停止并重启进程，测试保留同一持久卷。用 Cloud API 和两边只读数据库断言收敛、计数、状态不回退及没有未授权媒体。在未获批准分支观测不存在上传行为，再用显式人工批准的独立分支复用 M3 上传合成 MP4。固定对象版本、撤权与本地原件留存都要单独取证。场馆硬件和学员资料不进入此环境。
 - 交付记录包括固定提交、工具/环境版本、用例与场景映射、各端行数/游标与清理结果，CI 应在必选场景零收集或非预期跳过时失败。精确清理本次 run 的容器、网络和卷；日志与 artifacts 不含凭据、带签名 URL、原始视频或真实学员资料。
 
-## Open Questions · 负责人待签认
+## Q1–Q7 负责人签认
 
 <a name="decision-signoff"></a>
 
-下面逐项记录推荐方案、备选及影响。**Q1–Q7 均待签认，最终结论尚未填写。** 负责人需记录所选方案及参数、批准人/日期、对应评审 Head。选择备选时先更新候选契约、样例与验收矩阵，再冻结文档。
+记录日期 **2026-11-18（Asia/Shanghai）**。批准来源为本次负责人明确授权纯文档 Apply 的请求。签认对应 [二轮评审 Head](https://github.com/TuIanL/zhiyong-swim-platform/commit/a26d0065ff0a6f3c9925292176d4a4e33c4d1d6b) 及 [Draft PR #7](https://github.com/TuIanL/zhiyong-swim-platform/pull/7)。业务选择统一为 **Q1=A、Q2=A、Q3=A、Q4=A、Q5=B、Q6=A、Q7=A**。
 
-| 编号 | 推荐选项 A | 备选选项 B | 影响范围 | 需要签认的最终结论 |
+| 决策 | 原 A / B 候选 | 已批准 v1 选择 | 对 DB、API、Edge 和验收的影响 | 仍待确认 |
 | --- | --- | --- | --- | --- |
-| Q1 任务唯一性与控制权限 | 全 v1 生命周期每 Session 一个任务、每任务一次原子指派，终态占名额。仅 Owner/Admin 控制，首跑用合成任务 | 每 Session 仅禁止多个活动任务，终态可继任。若需 Coach 控制，另审资源权限及历史重放 | M4.3 唯一约束、管理 API、审计和 M4.4 重放 | 待签认，明确生命周期或活动窗口、允许角色及任务类型 |
-| Q2 权威和取消 | Cloud 先提交的合法终态生效，父 Session 取消联动未终结任务，迟到事实留审计，临时 Session 留本地 | 任务仅由显式任务取消控制，父 Session 取消后进入单独协调。离线 Session 映射另审 | Cloud 投影、父写路径、取消竞态与本地执行 | 待签认，确定终态胜负、父子联动及临时记录边界 |
-| Q3 凭据与本地停机 | 同 Node 受控再签发。一般掉线、自然过期和仅撤钥均保留已接单任务离线运行资格，已验证停用/停机才触发持久安全挂起 | 已验证撤钥也触发安全挂起，或增加独立可信的管理通道传递停机指令。保留一般断网持续运行 | M4.2 本地安全开关/执行恢复、M4.3 当前身份重验、现场审计 | 待签认，确定触发矩阵、可信通知与恢复责任、凭据交付和解挂要求 |
-| Q4 下发方式、有效期与签名 | 有效认证的 TLS 拉取、固定水位及连续版本校验。未接单任务由 Cloud 取消终止接单资格，无独立硬截止或离线签名 | 新增签名信封和仅作用于未接单任务的截止，先定义可信时钟和密钥管理 | Notion 07 口径、协议字段、Edge 接单及断网门槛 | 待签认，确定有效期、签名与已接单继续执行的边界 |
-| Q5 媒体授权和现场条件 | v1 合成验收只同步元数据，原片默认本地。另行获准后通过已有 M3 传输 | 在明确授权、对象范围及隐私前置后，将人工批准上传纳入单独试点 | 媒体/报告可见范围、部署、硬件、治理 | 待签认，确定此片是否含已批准的媒体路径、授权角色与现场前置。生产厂商、硬件及保留策略另审 |
-| Q6 队列预算与对账 | 隔离 Edge 文件库 + PG17，候选限额 8 KiB/事件、50 条/页。有界带抖动退避，缺失历史时报告人工恢复 | 更小页或不同预算，未来评审带快照的游标恢复与裁剪 | API 限额、调度、运行观测与 CI 负向场景 | 待签认，确定限额、退避和重试预算、告警、对账和人工恢复责任 |
-| Q7 停用设备的迟到事实 | Node 当前仍有效且 Device 同归属时，新采集要求 Device active。停用设备的迟到事实走授权冲突收据，已登记历史按现行授权查询 | 仅对能证明采集时仍获授权的事实按采集版本接纳，需要防篡改的授权证据。越域仍拒绝 | 摄像头来源校验、采集投影、冲突证据和隐私 | 待签认，确定接纳时用当前状态或可信采集版本，以及冲突最小字段 |
+| Q1 | A 全生命周期唯一，仅 Owner/Admin；B 仅活动任务唯一，扩展控制权限需另审 | **A**。一个 Session 最多一个 Task、Task 最多一次 Assignment，固定一个 Node，终态占位，首跑 `capture_demo` | M4.3 同事务创建任务、分配、命令和收据。唯一约束、权限、幂等和重复取消按 D4 / T1–T9 / L2 | 多任务、多次分析和重派后续另议 |
+| Q2 | A 父取消联动、合法先提交终态；B 显式任务取消、父取消单独协调 | **A**。Cloud 控制，Edge 报事实。迟到合规事实与冲突收据留存，完成历史保留，离线临时 Session 留本地 | M4.2 取消消费，M4.3 Cloud 投影和父事务，M4.4 竞态，保持 M3 终态与 ready 兼容 | 临时 Session 正式接纳及 ID 映射另议 |
+| Q3 | A 仅撤钥继续本地运行，可信停用/停机触发安全挂起；B 撤钥亦挂起或另增管理通道 | **A**。断网/自然过期/仅撤钥时已接单任务继续。经验证的停用或本地停机持久挂起，保留事实和检查点。D12 继续适用 | M4.2 安全停止、解挂及重启，M4.3 现行凭据重验和 Registry 恢复，C1–C4/L4 | 可信通知、现场核验、凭据交付与解挂实现；完全离线无法保证及时收到远端停用 |
+| Q4 | A HTTPS/TLS 拉取 + 固定水位；B 独立签名和未接单硬截止 | **A**。有效认证、连号、版本及载荷校验，无逐命令签名或独立任务硬截止 | M4.2/M4.3 区分持久接收、Command ACK、业务接单、实际执行。A1/A2，尚未送达取消不视为 Edge 已停止 | 各实现的调度及事务细节按 D3、Q6 验证 |
+| Q5 | A 首版只验元数据，上传另行获准；B 在明确人工批准后纳入媒体验证 | **B**。M4.4 必验经过人工批准的合成 MP4 上传。原片默认本地，事件、执行终态及收据均不触发上传 | 现有 M3 权限、UploadSession、分片、续传及整对象验证，M1–M6 验收，无 M4 媒体授权扩展 | 真实审批人/记录产品规则、真实个人信息和监护人授权、生产存储/区域/访问控制、保留、备份、删除、撤回、审计 |
+| Q6 | A 限额、持久化与人工恢复；B 改分页预算或带快照裁剪 | **A**。8 KiB/事件、50 条/页、双向连续序号、带抖动有界指数退避、原信封保留、`recovery_required`、独立文件库和 PG17 | M4.2 重试/不丢事实，M4.3 服务端限额与对账，M4.4 故障注入。问题分配不阻断其它上行分配 | 连接/请求超时、退避/抖动参数、重试预算和重置、告警、重连对账周期、人工恢复触发/操作阈值 |
+| Q7 | A 按当前设备状态和授权，停用转冲突；B 按可信历史采集授权版本接纳 | **A**。同作用域停用设备仅在当前授权和因果合法时可记录冲突并消费序号，自报时间不能证明采集时授权 | M4.3 接纳及最小审计，越 Tenant/Site/Node 或无效凭据仍拒绝，验收 S1.1 及 D2 样例 | 可证明的历史授权版本另审 |
 
-[候选行为契约与样例](candidate-contract.md) · [验收矩阵](tasks.md)
+[行为契约与样例](candidate-contract.md) · [验收矩阵](tasks.md)

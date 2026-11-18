@@ -1,6 +1,6 @@
 # Tasks
 
-本 Change 的 7 项任务只跟踪纯文档契约签认及交付，当前均待明确授权。Q1–Q7 的最终结论统一记录于 [决策表](design.md#decision-signoff)。矩阵中的运行证据归属后续 Change。
+本 Change 的 7 项任务只跟踪纯文档契约签认及交付，负责人已明确授权本次纯文档 Apply。Q1–Q7 已批准结论见 [决策表](design.md#decision-signoff)。矩阵中的运行证据归属后续 Change。
 
 ## 1. 确认范围与权威
 
@@ -22,7 +22,7 @@
 
 <a name="acceptance-matrix"></a>
 
-R/S 编号对应 [候选行为契约与样例](candidate-contract.md)，原 8 项 Requirement 和 19 个 Scenario 保留。表内结果是候选验收预期，故障注入和数据库断言由后续 Change 验证。
+R/S 编号对应 [候选行为契约与样例](candidate-contract.md)，原 8 项 Requirement 和 19 个 Scenario 保留。表内结果是签认后的行为验收预期，故障注入和数据库断言由后续 Change 验证。
 
 | Requirement / Scenario | 契约走读与预期 | 后续运行证据 |
 | --- | --- | --- |
@@ -46,7 +46,7 @@ R/S 编号对应 [候选行为契约与样例](candidate-contract.md)，原 8 �
 | R8 / S8.1 | 事件已确认，无上传授权时无传输；M3 `completing` 时无 `ready`；Edge 无自动删除 | M4.2 本地文件规则，M4.3/M4.4 既有 RustFS 隔离媒体回归 |
 | R8 / S8.2 | 保留原身份、Session、上传和媒体读权操作；历史 Session 无须回填任务 | M4.3 SQLite/PG 兼容测试，M4.4 原 CI 回归 |
 
-## 定向修订补充验收矩阵
+## 定向验收矩阵
 
 | 向量 | 候选预期 | 后续运行证据 |
 | --- | --- | --- |
@@ -71,3 +71,19 @@ R/S 编号对应 [候选行为契约与样例](candidate-contract.md)，原 8 �
 | L4 | 撤钥、停用或等待锁跨过到期点与 Inbox 写入/重放竞态，401 路径不写、不泄露历史，先合法提交结果可审计 | M4.3 PG17 双连接与可控 UTC |
 
 [Design 与负责人决策清单](design.md#decision-signoff) · [协议样例](candidate-contract.md#协议样例)
+
+
+## Q5 B 人工批准媒体联调矩阵
+
+<a name="media-matrix"></a>
+
+M1–M6 均归 M4.4 在隔离 RustFS 上用合成 MP4 和测试身份运行。记录批准动作及其 Session、资产、目的、当前身份绑定。该编号与原 R/S/T/A/C/L 分开。
+
+| 向量 | 测试与预期 | 运行证据 |
+| --- | --- | --- |
+| M1 | 未批准时上报采集与任务终态。M4 可以回 ACK，UploadSession 创建数、对象写入和原片上传请求均为零 | Cloud/Edge 投影、数据库行数、传输观测 |
+| M2 | 人工对该 Session 的指定合成资产、目的和当前授权明确确认。由已有 M3 权限的发起身份创建意图，回链 Asset 与 UploadSession。同键重试只保留一对资源 | 测试批准记录、M3 身份和实际 API/资源 ID |
+| M3 | 分片中断及进程重启。保留批准、原意图、已确认分片与幂等键，原发起身份通过 M3 查询/补签和续传 | 同一 upload ID、分片回执、重启证据 |
+| M4 | 分片成功和 `completing` 均无 `ready`。M3 对实际对象版本的 SHA-256、大小和媒体有效性验证成功，才成对提交 completed/ready。对错误摘要、大小、媒体格式或版本单独验证拒绝 | worker 前后状态、对象版本和脱敏校验结果 |
+| M5 | 撤销或过期后，旧凭据和同步收据不能创建意图、补签、确认或完成。验证提交前丧失授权不得 ready，已签 URL 只按 M3 自身 TTL 生效 | 旧身份拒绝、到期边界、验证回执 |
+| M6 | 最终 `ready` 后 Edge 原件仍在且 SHA-256 一致。Cloud 成功回执及 M4 ACK 均不触发自动删除 | 本地存在性、SHA-256、传输与删除观测 |

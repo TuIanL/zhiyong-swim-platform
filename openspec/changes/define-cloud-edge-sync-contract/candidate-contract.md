@@ -1,14 +1,14 @@
 # v1 候选行为契约与样例
 
-**二轮 Propose · 待负责人签认 · 后续实施输入**
+**负责人已签认 M4 v1 设计方向 · 后续实施输入**
 
-R1–R8 与原 19 个 Scenario ID 延续自 [原始评审 Head](https://github.com/TuIanL/zhiyong-swim-platform/commit/b2bb18313d9fc1b66d85ee391b8e11aee23bff1d)。以下 SHALL/MUST 用于表达候选行为的验收强度。负责人签认只确认文档设计，M4.2/M4.3 应各自将承担的行为转写为实施 Change 的 Delta。满足状态须由对应实现及验收证据支持，跨端收敛由 M4.4 单独验收。M4.1 使用 `skip_specs: true`，未来归档时本文随文档留存。
+R1–R8 及原 19 个 Scenario 从 [初始评审 Head](https://github.com/TuIanL/zhiyong-swim-platform/commit/b2bb18313d9fc1b66d85ee391b8e11aee23bff1d) 保留。签认依据及实施状态见 [Design](design.md#decision-signoff)。SHALL/MUST 描述实施后的验收要求。M4.2/M4.3 各自提取其交付行为的 Delta，系统验收由 M4.4 执行。M4.1 使用 `skip_specs: true`。
 
 ## 用途
 
 定义 Cloud 与 Edge 间版本化训练任务指令、最小采集事实和执行回报的行为，使节点在断网期间继续已接收的工作，并在重新联网后通过持久收据、重放和对账恢复一致的任务视图。
 
-## 候选需求与场景
+## 设计基线的需求与场景
 
 ### Requirement: R1 Scoped identities and immutable envelopes
 
@@ -108,7 +108,7 @@ Cloud SHALL 下发任务分配和取消，Edge SHALL 回报持久接收、采集
 
 ### Requirement: R8 Existing media and identity contracts continue to apply
 
-同步事件 SHALL 只包含允许的有界元数据。另行获准的二进制传输 SHALL 复用 M3 UploadSession 与既有身份、资源、有效期及整对象验证约束。同步 ACK MUST 只确认事件处理结果。
+同步事件 SHALL 只包含允许的有界元数据。另行获准的二进制传输 SHALL 复用 M3 UploadSession 与既有身份、资源、有效期及整对象验证约束。同步 ACK MUST 只确认事件处理结果。按 Q5=B，M4.4 SHALL 单独验收明确人工批准的合成视频 M3 上传。批准绑定 Session、具体资产及用途，M3 执行现行授权复核。
 
 #### Scenario: S8.1 Distinct media and event acknowledgements
 - **WHEN** 采集事件已 ACK，但视频尚未获准上传，或已获准上传并处于 `completing`
@@ -220,7 +220,7 @@ Content-Type: application/json
 - 重新排序 JSON 字段，或将同一 UTC 时刻表示为 `+00:00` 再发送，返回同一收据。把 `device_observed_at_raw` 改为另一个字符串，或以另一事件 ID 占用序号 2，返回 `409 event_conflict`。
 - 先发送序号 2 且 Cloud 期望 1，返回 `409 sequence_gap` 与期望序号 1。补 1 后再投递 2。
 - 添加重复 JSON 键、设置 `captured_at_utc: null`、上报 `ready` 或从上行发送下行命令均返回 422。节点授权范围不符返回 404，凭据无效返回 401。以上拒绝均不推进水位。
-- Device 同归属但已停用时，按 Q7 的推荐选项返回 200，收据 `disposition=conflict_recorded` 且 `code=device_disabled`。有效冲突占用该上行序号，普通采集投影不增加。
+- Device 同归属但已停用时，按 Q7 已批准的选项返回 200，收据 `disposition=conflict_recorded` 且 `code=device_disabled`。有效冲突占用该上行序号，普通采集投影不增加。
 
 ### ACK、接单与实际执行
 
@@ -238,3 +238,7 @@ Content-Type: application/json
 | C2 | 管理员向同一节点发出经验证的仅撤钥操作 | 停用旧钥并保留离线执行，持续保存新事实。Cloud 拒绝旧钥的重放和收据读取 |
 | C3 | 经验证的节点停用或本地安全停机通知，此时同时有已接单待跑任务及运行中任务 | 持久 `safety_hold`、零新开工、运行中任务安全收口，重启保持挂起与原 Outbox。无任务取消命令时不报告 `stopped_by_cancel` |
 | C4 | 先更换同 Node 凭据，再按需验证 Registry 恢复和本地解挂。另用不同 Node 身份验证隔离 | 自然过期或仅撤钥可恢复原账本同步。停用路径在 Node 尚未激活时仍被拒绝，激活且新凭据生效后可对账，但有审计的本地解挂前不得开工。其他节点无法使用原队列 |
+
+## 人工批准后的媒体验收入口
+
+[Design 中的独立 M3 链路](design.md) 与 [M1–M6 验收矩阵](tasks.md#media-matrix) 适用于 Q5=B。事件回报和媒体状态彼此独立。
