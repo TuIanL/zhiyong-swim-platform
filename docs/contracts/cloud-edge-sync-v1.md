@@ -23,7 +23,15 @@
 - 未来实现入口为 `POST /api/v1/tenants/{tenant_id}/sites/{site_id}/training-tasks/{task_id}/cancel`，使用相同控制权限和 `Idempotency-Key`。请求只接收 `expected_task_version` 正整数。服务端设置 `operator_cancelled`，父 Session 取消联动路径使用 `session_cancelled`。指定任务必须属于受权的场馆。停用节点的任务仍可由有权操作人取消。
 - `assigned/accepted` 且期望版本匹配时，同事务写入 `cancelled`、递增到 v2、追加唯一取消命令并保存收据。返回 `200` 和包含 `task_id`、`assignment_id`、`status`、`task_version`、`sequence`、`cancelled_at`、`reason` 的收据。同键同参重放返回原收据。同键异参先按幂等冲突处理。已取消任务用新键、期望版本为取消前版本或当前取消版本时，返回原取消结果，取消版本、时间、原因和命令数量保持一致。可取消或已取消的任务遇到其它期望版本时返回 `409 version_conflict`。`completed/failed` 的新取消返回 `409 state_conflict`，无任务或命令写入。
 - 分配、终态投影及父 Session 取消先序列化父 Session，再锁受影响的任务行。先提交的合法终态生效。父 Session 先取消时，同事务取消未终结任务并追加命令，同时按既有 M3 语义收口未完成媒体。任务先完成时，合法的父 Session 取消继续独立处理，保留任务和既有媒体历史。单独任务取消只控制该分配。
-- Cloud 已取消时，合规的迟到接单、采集及成功/失败回报写冲突收据与最小审计事实，普通投影保持取消。上行允许引用已知历史命令版本，拒绝未来版本或缺少因果前置的事件。只有收到并持久应用对应任务取消指令才可回报 `stopped_by_cancel`。本地安全挂起见 [D5](../architecture/cloud-edge-sync-v1.md#offline-safety)。
+#### 取消后的离线补投与安全停止
+
+<a name="late-cancellation-replay"></a>
+
+- Cloud 按当前有效 Node 身份核对 Tenant、Site、Node、Session、Task 与 Assignment，再校验 Event ID、序号与因果。对 Task 已合法取消的新事件，同一 Assignment 的合法连续上行事实在同一事务写入 Inbox、原序号、收据及最小审计。迟到 `training_task.accepted`、后续 `capture.recorded` 和合法 `training_task.finished` 均返回 HTTP 200、`disposition=conflict_recorded`、`code=task_cancelled`。收据保留原 `event_id`、`assignment_id`、`sequence`。Task 正式终态保持 `cancelled`，不重建 Task 或 Assignment，不创建正常采集投影、上传意图或 `VideoAsset.ready`。
+- 因果来自同一 Assignment 已消费的 Inbox 接单事实。处置为 `applied` 或 `conflict_recorded` 的合法接单都可作为后续 `capture.recorded`、`training_task.finished` 的接单前置。该证据与正式 Task 投影分开保存，其他 Assignment 的接单不能借用。Cloud 保存节点作用域、身份已核验的分配关联、事件 ID/类型/序号、原命令版本、信封指纹、服务端入库时间和处置。采集另留来源设备及 capture ID，终态另留实际 outcome。审计保留最小事实，遵守事件白名单和原片本地边界。
+- `completed` 与 `failed` 记录实际完成或失败的 Edge 终态。Edge 应用取消和写执行终态使用本地持久记录定序。终态已产生时，即使随后收到或应用取消，仍补投原终态、原序号和原命令版本。Cloud 已取消或 Edge 尚未收到命令，以及仅收到 HTTP 结果或发出 Command ACK，都不能产生 `stopped_by_cancel`。
+- `stopped_by_cancel` 只由 Edge 已持久应用同一 Assignment 的取消命令、且执行器因该命令实际安全停止后产生。Edge 持久关联取消命令版本与实际停止事实；沿现有信封上报对应的 `task_version`（v1 为 2）及 `outcome`。Cloud 核对该分配的已提交取消命令、版本及先前合法接单，持久审计该版本、取消原因/命令关联及停止 outcome，再以同一 `task_cancelled` 冲突收据消费序号。Command ACK 的到达不是上行验证前置，因其可丢失。一般本地安全挂起按 [D5](../architecture/cloud-edge-sync-v1.md#offline-safety) 处理。
+- 已认证且归属正确的同 ID、同内容重放返回原逻辑收据，不再消费或写审计。同 ID 异内容或同序号换 ID 为 `409 event_conflict`，缺序为 `409 sequence_gap`。连续序号引用未来版本、缺少同分配已消费接单、报告第二个执行终态，或 `stopped_by_cancel` 缺少相符取消命令及版本时，返回 `422 validation_error`。无效身份和越域分别返回 401/404。这些拒绝均不消费序号或生成成功收据。完整轨迹见 [W1.1–W1.7](#w1-vectors)。
 
 ## 事件和同步线路
 
@@ -47,7 +55,7 @@ v1 请求使用严格 JSON 对象和字段白名单，事件版本为整数 `sch
 | Cloud → Edge `training_task.cancelled` | `reason` 枚举 `operator_cancelled` / `session_cancelled` | 持久取消。待执行任务停止启动，运行中的任务协作停止 |
 | Edge → Cloud `training_task.accepted` | 空对象 | 上行首条。保存本地已接单的事实 |
 | Edge → Cloud `capture.recorded` | `capture_id`、`device_id`、可选 `captured_at_utc` 与 `device_observed_at_raw`（≤64 字符） | 每次采集一次 ID，至少记录来源。允许两个时间字段都缺省以表达未知；原始设备时间不被服务端时间填补 |
-| Edge → Cloud `training_task.finished` | `outcome=completed/failed/stopped_by_cancel` | 每个接收过的分配最多一次正常执行终态。成功/失败由 Cloud 按当前控制状态和接收顺序投影；已取消后的回报适用 D4 |
+| Edge → Cloud `training_task.finished` | `outcome=completed/failed/stopped_by_cancel` | 每个已接单分配最多一个真实执行终态，原信封可重复投递。Cloud 按 D4 和提交顺序投影或记录冲突。 |
 
 接收端按已验证、规范化的不可变信封计算内容指纹。字段顺序和 JSON 空白不改变含义，重复键与未知字段拒绝，UUID 规范为小写连字符格式，UTC 时刻统一为等义的 Z 表示，可选时间字段缺失时统一省略，显式 null 拒绝。原始设备时间字符串按原值保留。规范化正反例见[本契约样例](#examples)。Inbox 主键为 `event_id`，另用作用域、分配及序号做唯一约束；同序号异 ID 和同 ID 异信封均为完整性冲突。采集另按 `(tenant_id, site_id, edge_node_id, assignment_id, capture_id)` 保证同一业务事实只有一份；两个独立采集可有相同文件哈希。请求级 `Idempotency-Key` 继续服务已有管理和上传接口，独立于事件去重。
 
@@ -75,10 +83,18 @@ Q4 确认 Edge 使用有效节点身份主动发起 HTTPS/TLS 拉取与回报。
 
 - 先校验当前身份与可见归属，再查旧收据。认证失败 `401 edge_unauthorized`，越范围 `404`。不支持的版本、方向或格式返回 `422`。序号空洞返回 `409 sequence_gap` 及期望序号；事件身份冲突返回 `409 event_conflict`；不可从现存历史恢复的游标返回 `409 recovery_required`。上述错误不推进 Inbox 或交付水位。结构合法、权限匹配但与已提交业务终态冲突的下一条事件，原子记录 `conflict_recorded` 并消费该序号。
 - Cloud 任务命令及下发日志同事务提交，序号以事务内节点流计数分配，回滚不留空洞。Edge 连续应用命令时提交 Inbox、命令效果和本地游标，提交后才发送游标 ACK。命令重复接收只返回已持久处理进度。业务接单和调度按本节四个边界推进。
-- Edge 每条本地采集或终态与 Outbox 同事务入库。Cloud 将 Inbox 收据、流位置、任务投影或结构化冲突记录同事务提交，再返回收据。发送端只对归属、事件 ID、分配和序号均与待发项匹配的结构化收据标记成功或冲突。同条件重复接收仍计一次业务效果，两个方向都允许至少一次投递。并发重复、重启及超时后仍按已提交结果恢复。
+- Edge 每条本地采集或终态与 Outbox 同事务入库。Cloud 将 Inbox 收据、流位置、任务投影或结构化冲突记录同事务提交，再返回收据。发送端按[收据匹配规则](#receipt-scope)验证后才在本地确认对应待发项。同条件重复接收仍计一次业务效果，两个方向都允许至少一次投递。并发重复、重启及超时后仍按已提交结果恢复。
 - 发送端每条流只派送头部未确认项，分配间不要求总顺序。超时、断网、429/可重试 5xx 使用带抖动的有上限指数退避，429 尊重服务端提示。耗完一轮预算后保留记录与下一次尝试时机。422、404 或完整性冲突暂停对应流，保留人工诊断入口。永久拒绝不能将原 ID 改载荷重发或跳号。其它分配可继续。
 - 重连先用本地游标拉取指令直至固定水位，再补送 Command ACK 并按序重放本地 Outbox。Command ACK 丢失时重发已持久接收的水位。上行收据丢失时重投原事件。最后读取对账结果，比对双向水位、当前任务投影和本地待发记录。投影依据递增的 `projection_revision` 应用；Cloud ACK 水位只作线索。Cloud 期望序号领先时仍需补取具体收据，不能仅凭水位删除未确认项。已有节点缺少已初始化的本地账本时，启动应挂起并报告恢复需求，禁止自动用空库从零重放。只有已验证为新绑定的节点能初始化零游标。存在无法补齐的本地缺口或超出可重放历史时，同样挂起受影响的节点/分配并人工恢复；v1 无跳游标重置。
 
+
+### 上行收据作用域匹配
+
+<a name="receipt-scope"></a>
+
+Cloud 以当前有效的节点认证绑定推导 Tenant/Site/Node，客户端在信封中声明的字段只用于比对。Edge 将发请求时的认证作用域和具体请求关联到不可变的本地 Outbox 信封。处理成功响应时，先核对该请求的 Tenant/Site/Node 与本机当前认证上下文及待发信封一致，再核对响应的 `assignment_id`、`event_id`、`sequence` 与该待发项一致，且 `disposition` 为 `applied` 或 `conflict_recorded`。网络层必须能关联响应和具体原请求，不按到达顺序推定。相同 Node 重新认证后，对账并从当前绑定重发原信封。
+
+全部匹配时，仅确认该 Outbox 项并保存原处置。作用域、任一 ID、序号或处置不符，以及无法关联原请求时，保留待发状态和诊断线索。重复的同一匹配收据幂等。水位和普通 HTTP 200 不能代替匹配收据。响应继续只携带 `event_id`、`assignment_id`、`sequence`、`disposition` 和可选 `code`。[S1 定向向量](#s1-vectors)
 
 ### 响应与结构化错误
 
@@ -92,7 +108,7 @@ Q4 确认 Edge 使用有效节点身份主动发起 HTTPS/TLS 拉取与回报。
 | 资源不存在或越作用域 | 404 `not_found` | 无资源详情、无写入 |
 | 可见场馆内 User 角色不足 | 403 `forbidden` | 无写入 |
 | 信封超过 8192 字节 | 413 `event_too_large` | 读取阶段拒绝超限信封，422 用于限额内的格式错误，错误不透露资源状态；无写入 |
-| 无效键、重复 JSON 键、非法枚举、未知字段、方向或版本不支持、页数非法 | 422 `validation_error` | 无成功 ACK 或收据 |
+| 无效键、重复 JSON 键、非法枚举、未知字段、方向或版本不支持、页数非法、D4 因果校验不通过 | 422 `validation_error` | 不消费序号，无成功 ACK 或收据 |
 | 上行序号有缺口，或 `through` 超当前可确认命令头 | 409 `sequence_gap` | 上行附期望序号；不越缺口。下行从已提交本地水位重拉 |
 | 历史或本地账本无法恢复 | 409 `recovery_required`（本地对应同名状态） | 挂起受影响的节点流或分配并保留全部证据 |
 | 同事件 ID 异信封，或同序号异事件 ID | 409 `event_conflict` | 原收据/投影不变 |
@@ -402,7 +418,7 @@ Content-Type: application/json
 
 ### 人工批准后复用 M3 的样例
 
-隔离测试使用 [仓库合成 MP4](../../services/cloud/tests/fixtures/synthetic-swim.mp4)，以已获授权的 Session 和指定目的发起。下例为 **既有 M3 User UploadIntentCreate** 请求，测试批准引用、资产标识和用途保存在测试取证记录，调用前核对绑定。未批准时不发此请求。
+轻量上传意图示例使用 [仓库合成 MP4](../../services/cloud/tests/fixtures/synthetic-swim.mp4)，以已获授权的 Session 和指定目的发起。下例为 **既有 M3 User UploadIntentCreate** 请求，测试批准引用、资产标识和用途保存在测试取证记录，调用前核对绑定。未批准时不发此请求。
 
 ```json
 {
@@ -424,6 +440,31 @@ Content-Type: application/json
 | C2 | 管理员向同一节点发出经验证的仅撤钥操作 | 停用旧钥并保留离线执行，持续保存新事实。Cloud 拒绝旧钥的重放和收据读取 |
 | C3 | 经验证的节点停用或本地安全停机通知，此时同时有已接单待跑任务及运行中任务 | 持久 `safety_hold`、零新开工、运行中任务安全收口，重启保持挂起与原 Outbox。无任务取消命令时不报告 `stopped_by_cancel` |
 | C4 | 先更换同 Node 凭据，再按需验证 Registry 恢复和本地解挂。另用不同 Node 身份验证隔离 | 自然过期或仅撤钥可恢复原账本同步。停用路径在 Node 尚未激活时仍被拒绝，激活且新凭据生效后可对账，但有审计的本地解挂前不得开工。其他节点无法使用原队列 |
+
+### W1 补投正反样例
+
+已取消分配的合法停止回报使用上行信封 `task_version=2`、`sequence=3`、`payload={"outcome":"stopped_by_cancel"}`。Cloud 已提交同分配取消命令，Edge 已持久应用命令且实际安全停止。其合法收据为 HTTP 200：
+
+```json
+{
+  "event_id": "00000000-0000-4000-8000-000000000013",
+  "assignment_id": "00000000-0000-4000-8000-000000000006",
+  "sequence": 3,
+  "disposition": "conflict_recorded",
+  "code": "task_cancelled"
+}
+```
+
+反例是相同上行位置从未应用取消命令却声称 `stopped_by_cancel`，例如仍上报 `task_version=1`。其 HTTP 422 响应如下，保持期望序号不变，不写 Inbox/Receipt：
+
+```json
+{
+  "detail": {
+    "code": "validation_error",
+    "message": "停止事实缺少匹配的取消命令版本"
+  }
+}
+```
 
 ## Requirement / Scenario 验收矩阵
 
@@ -482,11 +523,42 @@ R/S 编号对应 [本契约的需求与场景](#requirements)，原 8 项 Requir
 [ADR 0004](../decisions/0004-cloud-edge-sync-v1.md) · [协议样例](#examples)
 
 
+## W1 取消后的离线补投验收
+
+<a name="w1-vectors"></a>
+
+共同起点：Assignment A 绑定已认证 Node N，初始命令版本 1。Edge 已本地持久接单但上报尚未送达，Cloud 先提交该 Task 的合法取消（v2）；单独任务取消和父 Session 联动各运行一遍。上行序号属于 A，与下行游标独立。表中所有成功消费均在同一事务写 Inbox、收据与最小审计，Task 投影保持 `cancelled`。同 ID 同内容重放返回原逻辑收据，不再消费。所有拒绝都保留 Edge 待发项，Cloud 无新增 Inbox、成功收据、序号消费或投影变更。
+
+| 编号 | Edge 原始事实及顺序 | Cloud 终态及序号 | Inbox、收据与重放 |
+| --- | --- | --- | --- |
+| W1.1 | 本地已接单，`accepted@1/v1` 仍待发，Cloud 先取消 | `cancelled`，上行仍期望 1 | 尚未上报，无 Inbox/收据，重连前保留原信封 |
+| W1.2 | 补投 `accepted@1/v1` | `cancelled`，消费 1，期望 2 | 200 `conflict_recorded/task_cancelled`，记 A 的接单因果，重放同收据 |
+| W1.3 | 补投 `capture.recorded@2/v1`，使用已消费的 1 作为前置 | `cancelled`，消费 2，期望 3；正常采集投影和上传不变 | 200 `conflict_recorded/task_cancelled`，记来源和采集 ID，重放同收据 |
+| W1.4 | 接 W1.2/W1.3，补投收到并应用取消前已完成/失败的 `finished@3/v1`，分别测试两种 outcome | `cancelled`，消费 3，期望 4；不写任务完成或失败投影 | 200 `conflict_recorded/task_cancelled`，审计原 `completed` 或 `failed`，重放同收据 |
+| W1.5 | W1.4 的独立分支：接 W1.2/W1.3，实际应用取消 v2 并安全停止，补投 `finished@3/v2`，outcome 为 `stopped_by_cancel`。丢失 Command ACK 时再测一次 | `cancelled`，消费 3，期望 4 | 200 `conflict_recorded/task_cancelled`，保存停止 outcome 及命令关联，重放同收据；无对应取消命令/版本时为 422 |
+| W1.6 | W1.4 分支实际完成后收到取消：保留原 `completed@3/v1`，不生成另一个 stop；另注入伪造的第二个 `finished@4/v2` | `cancelled`，原 3 可确认；伪造的 4 不消费 | 3 重放原 200 冲突收据；4 为 422 `validation_error`，无新收据或审计事实 |
+| W1.7 | 分别重投原 1–3，改已消费的 ID 内容，以新 ID 占用同号，先发 2，使用失效凭据或其他 Node，使用与 Task/Session 不相符的 Assignment；另测同 Node 的另一个合法 Assignment 无自身接单 | `cancelled`；重放不再次推进，其余不消费 | 正确重放返回原 200 收据；异参/同号换 ID 为 409 `event_conflict`，缺序为 409 `sequence_gap`，失效身份 401，跨 Node/不相符归属 404。同 Node 合法 Assignment 若收到其连续首号采集但没有自身接单，返回 422 `validation_error`，不能借 A 的因果 |
+
+M4.2 验收执行事实与 Outbox 生成，M4.3 验收 Inbox、收据、因果及无投影副作用，M4.4 验收完整离线重连轨迹和稳定重放。
+
+## S1 收据匹配验收
+
+<a name="s1-vectors"></a>
+
+| 编号 | 收据及请求绑定 | Edge Outbox 预期 |
+| --- | --- | --- |
+| S1-R1 | Tenant/Site/Node 与认证请求上下文和本地信封一致，ID、序号与合法处置均匹配 | 仅确认对应待发项；同收据再到达不二次变更 |
+| S1-R2 | 同绑定，`event_id` 不匹配 | 保留原项待发并记录诊断，不确认其他项 |
+| S1-R3 | 同绑定，`assignment_id` 不匹配，再独立测试 `sequence` 不匹配 | 两种不匹配均不得确认 |
+| S1-R4 | ID、序号相同，但当前认证 Node 与请求或本地信封的 Tenant/Site/Node 绑定不符 | 保留待发项，拒绝跨节点确认 |
+
+S1 定向编号独立于原 Scenario。M4.2 验收本地匹配及幂等，M4.3 验收 Cloud 认证与最小收据投影，M4.4 验收真实往返。
+
 ## Q5 B 人工批准媒体联调矩阵
 
 <a name="media-matrix"></a>
 
-M1–M6 均归 M4.4 在隔离 RustFS 上用合成 MP4 和测试身份运行。记录批准动作及其 Session、资产、目的、当前身份绑定。该编号与原 R/S/T/A/C/L 分开。
+M1–M7 均归 M4.4 在隔离 RustFS 上用合成 MP4 和测试身份运行。记录批准动作及其 Session、资产、目的、当前身份绑定。该编号与原 R/S/T/A/C/L 分开。
 
 | 向量 | 测试与预期 | 运行证据 |
 | --- | --- | --- |
@@ -496,3 +568,51 @@ M1–M6 均归 M4.4 在隔离 RustFS 上用合成 MP4 和测试身份运行。�
 | M4 | 分片成功和 `completing` 均无 `ready`。M3 对实际对象版本的 SHA-256、大小和媒体有效性验证成功，才成对提交 completed/ready。对错误摘要、大小、媒体格式或对象版本变更单独注入失败并验证不得 ready | worker 前后状态、对象版本和脱敏校验结果 |
 | M5 | 撤销或过期后，旧凭据和同步收据不能创建意图、补签、确认或完成。验证提交前丧失授权不得 ready，已签 URL 只按 M3 自身 TTL 生效 | 旧身份拒绝、到期边界、验证回执 |
 | M6 | 最终 `ready` 后 Edge 原件仍在且 SHA-256 一致。Cloud 成功回执及 M4 ACK 均不触发自动删除 | 本地存在性、SHA-256、传输与删除观测 |
+| M7 | 人工批准专用多分片 MP4。确认第一片后中断并重启上传进程，沿原批准/发起人/UploadSession 对账，只补传缺片，再由 M3 终结 | [M7 取证链路及负向用例](#m7-multipart-resume) |
+
+### M7 多分片输入与取证
+
+<a name="m7-multipart-resume"></a>
+
+894 字节请求样例只用于轻量 API 示例。M7 使用既有有效合成 MP4 加一个合法 ISO-BMFF `free` box，可复用 [现有合成素材生成方式](../../services/cloud/tests/test_media_transfer_storage.py)。以下步骤在隔离环境从仓库根目录执行。生成文件位于临时目录。M4.4 验收固定使用 **ffprobe 6.1.1**，记录其实际版本、媒体格式、视频流、尺寸、时长、字节数和 SHA-256。
+
+```bash
+set -e
+fixture_dir=$(mktemp -d)
+python3 - "$fixture_dir/resume-20mib.mp4" <<'PYTHON'
+from hashlib import sha256
+from pathlib import Path
+import struct
+import sys
+
+seed = Path("services/cloud/tests/fixtures/synthetic-swim.mp4").read_bytes()
+size = 20 * 1024**2
+padding = size - len(seed)
+assert padding >= 8
+data = seed + struct.pack(">I4s", padding, b"free") + bytes(padding - 8)
+Path(sys.argv[1]).write_bytes(data)
+print(len(data), sha256(data).hexdigest())
+PYTHON
+ffprobe -version | head -n 1 | grep -F 'ffprobe version 6.1.1'
+ffprobe -v error -show_entries 'format=format_name,duration,size:stream=codec_type,codec_name,width,height' -of json "$fixture_dir/resume-20mib.mp4"
+```
+
+当前种子生成 **20,971,520 字节**，SHA-256 为 `ca553583858bab2781f3e8f09cab40c9069a6a4bd93b8d6df540919c92382fb0`。按 M3 当前 16 MiB 布局形成两片，第一片 **16,777,216 字节**，第二片 **4,194,304 字节**。媒体须可探测为有效 MP4。批准前对照实际生成记录和预期值，保留批准时的指纹。
+
+| 阶段 | M4.4 操作及必须取证 |
+| --- | --- |
+| 人工批准 | 为具体 Tenant/Site/Session、该文件及用途建立唯一测试批准引用，以当前有效且有 M3 权限的发起身份明确创建一个意图。持久记录批准引用、原发起身份标识、`asset_id`、`upload_session_id`、`Idempotency-Key`、长度和 SHA-256。同步事件照常上报，零隐式上传意图。 |
+| 首片确认 | 按服务端返回的冻结布局确认 2 个实际 part。签名并 PUT part 1，调用 M3 确认接口，再经 ListParts 读取 part 1 已确认的编号、大小及 ETag。网络观测表明未上传 part 2。 |
+| 中断重启 | 在 ListParts 已见首片且 part 2 尚未上传时终止测试上传进程并重启 Edge，保留原片、持久卷、批准记录、分片响应、UploadSession 和意图键。重启从原上下文恢复，同一发起主体、批准、upload ID 和 SHA-256；不产生第二个 UploadSession。 |
+| 对账续传 | 原发起者用现有 M3 ListParts 对账本地记录和首片回执，只为缺失的 part 2 签名、上传及确认。用网络观测断言重启后 part 1 新 PUT 为 0、补传数为 1。同一上传在对账、签名或恢复失败时保留原意图和证据，不静默新建。 |
+| 校验保留 | 用两个真实 ETag 调用现有 Complete；在 worker 验证前只允许 `completing`，且资产未 ready。由 M3 Worker 验证精确对象版本、完整 SHA-256、大小、媒体有效性及现有授权，再成对提交 `completed/ready`。记录分片数、重启次数、补传数、对象版本、校验结果及本地原件存在与哈希。 |
+
+负向验收独立保留证据：
+
+- 未获批准即试图启动上传时，由隔离编排或上传入口拒绝该动作，零 M3 意图请求与零新增 UploadSession。此门槛属于 M4.4 明确批准编排；现有 M3 API 授权行为不变。
+- 批准资产与本地待传文件的 SHA-256 不符时拒绝进入 Complete。另将受控错字节传至仍以原正确 SHA-256 声明的测试意图，验证 M3 的最终校验失败并无 `ready`。
+- 首片确认、第二片缺失时，只补传第二片。批准记录缺失时暂停并进入人工恢复，保留原意图与待传事实，通过原批准与现行身份核验后才恢复；权限不扩大。
+- 原发起人会话或节点凭据过期、撤销后，按 M3 规则拒绝新的分片 URL、确认和完成，旧签名仅按现有 TTL。挂起时仍保留本地原件。
+- 独立注入上传完成但 SHA-256 不符、媒体探测失败的两种场景，断言均无 `ready`。正常验证成功也不触发自动删除本地原件。
+
+M7 是 M4.4 的运行验收要求。文档阶段的夹具生成和媒体探测证据不替代双端传输、分片回执或 worker 实证。
