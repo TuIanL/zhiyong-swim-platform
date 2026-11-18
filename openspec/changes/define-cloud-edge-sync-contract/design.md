@@ -46,7 +46,7 @@
 | D4 任务控制、终态与父 Session | [控制 API](../../../docs/contracts/cloud-edge-sync-v1.md#cloud-control) · [PG17 锁依赖与竞态](../../../docs/architecture/cloud-edge-sync-v1.md#postgresql-races) |
 | D5 凭据与安全停止 | [架构](../../../docs/architecture/cloud-edge-sync-v1.md#offline-safety) |
 | D6 分段交接及验收 | [架构](../../../docs/architecture/cloud-edge-sync-v1.md#handoff) |
-| Q6 技术参数 | [待签认参数登记](../../../docs/architecture/cloud-edge-sync-v1.md#timing-register) |
+| Q6 技术参数 | [已签认的隔离开发与测试参数](../../../docs/architecture/cloud-edge-sync-v1.md#timing-register) |
 
 ## Q1–Q7 负责人签认
 
@@ -61,7 +61,9 @@
 | Q3 | A 仅撤钥继续本地运行，可信停用/停机触发安全挂起；B 撤钥亦挂起或另增管理通道 | **A**。断网/自然过期/仅撤钥时已接单任务继续。经验证的停用或本地停机持久挂起，保留事实和检查点。D12 继续适用 | M4.2 安全停止、解挂及重启，M4.3 现行凭据重验和 Registry 恢复，C1–C4/L4 | 可信通知、现场核验、凭据交付与解挂实现；完全离线无法保证及时收到远端停用 |
 | Q4 | A HTTPS/TLS 拉取 + 固定水位；B 独立签名和未接单硬截止 | **A**。有效认证、连号、版本及载荷校验，无逐命令签名或独立任务硬截止 | M4.2/M4.3 区分持久接收、Command ACK、业务接单、实际执行。A1/A2，尚未送达取消不视为 Edge 已停止 | 各实现的调度及事务细节按 D3、Q6 验证 |
 | Q5 | A 首版只验元数据，上传另行获准；B 在明确人工批准后纳入媒体验证 | **B**。M4.4 必验经过人工批准的合成 MP4 上传。原片默认本地，事件、执行终态及收据均不触发上传 | 现有 M3 权限、UploadSession、分片、续传及整对象验证，M1–M6 验收，无 M4 媒体授权扩展 | 真实审批人/记录产品规则、真实个人信息和监护人授权、生产存储/区域/访问控制、保留、备份、删除、撤回、审计 |
-| Q6 | A 限额、持久化与人工恢复；B 改分页预算或带快照裁剪 | **A**。8 KiB/事件、50 条/页、双向连续序号、带抖动有界指数退避、原信封保留、`recovery_required`、独立文件库和 PG17 | M4.2 重试/不丢事实，M4.3 服务端限额与对账，M4.4 故障注入。问题分配不阻断其它上行分配 | 连接/请求超时、退避/抖动参数、重试预算和重置、告警、重连对账周期、人工恢复触发/操作阈值 |
+| Q6 | A 限额、持久化与人工恢复；B 改分页预算或带快照裁剪 | **A**。8 KiB/事件、50 条/页、双向连续序号、带抖动有界指数退避、原信封保留、`recovery_required`、独立文件库和 PG17 | M4.2 重试/不丢事实，M4.3 服务端限额与对账，M4.4 故障注入。问题分配不阻断其它上行分配 | 负责人已补充签认隔离环境 P01–P10，生产默认值另审 |
 | Q7 | A 按当前设备状态和授权，停用转冲突；B 按可信历史采集授权版本接纳 | **A**。同作用域停用设备仅在当前授权和因果合法时可记录冲突并消费序号，自报时间不能证明采集时授权 | M4.3 接纳及最小审计，越 Tenant/Site/Node 或无效凭据仍拒绝，验收 S1.1 及 D2 样例 | 可证明的历史授权版本另审 |
 
-[ADR 0004](../../../docs/decisions/0004-cloud-edge-sync-v1.md) · [行为契约与样例](../../../docs/contracts/cloud-edge-sync-v1.md) · [验收矩阵](tasks.md#acceptance-matrix)
+2026-11-18（Asia/Shanghai），负责人基于 [6/7 交付 Head](https://github.com/TuIanL/zhiyong-swim-platform/commit/ff5d82c1b4c85e7b438cb125b581a52784cc3f6a) 确认采用 P01–P10 原建议值，适用范围仅为隔离开发与测试。详见 [ADR 0004](../../../docs/decisions/0004-cloud-edge-sync-v1.md) 与 [参数登记表](../../../docs/architecture/cloud-edge-sync-v1.md#timing-register)。
+
+[行为契约与样例](../../../docs/contracts/cloud-edge-sync-v1.md) · [验收矩阵](tasks.md#acceptance-matrix)

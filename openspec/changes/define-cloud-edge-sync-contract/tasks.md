@@ -10,7 +10,7 @@
 ## 2. 确认协议与对账规则
 
 - [x] 2.1 按决定确认请求/响应字段、允许事件、状态码、规范化指纹和错误结构。核对双方可独立走读的同义 JSON、异参、越权、未知版本和成功/冲突收据样例，以 S1.1、S1.2、S3.3、S5.2 对照验收。
-- [ ] 2.2 按 Q6 确认 ACK、事务边界、退避预算、重连水位和人工恢复规则。用 A1/A2 核对持久接收、Command ACK、业务接单和实际执行，用 S3.1、S3.2、R4、S5.1 核对提交前失败、提交后丢响应、乱序、重启和游标丢失。
+- [x] 2.2 按 Q6 确认 ACK、事务边界、退避预算、重连水位和人工恢复规则。用 A1/A2 核对持久接收、Command ACK、业务接单和实际执行，用 S3.1、S3.2、R4、S5.1 核对提交前失败、提交后丢响应、乱序、重启和游标丢失。
 - [x] 2.3 走读取消与完成的双顺序、父 Session 取消和 Edge 尚未执行三条轨迹，并确认 scope/序号、冲突收据和本地事实均可追溯。对照 R6 与 L1–L4，确认 M4.3 的 PostgreSQL 竞态计划具有固定锁序、并发顺序与可观察断言。
 
 ## 3. 核对追溯与交接
@@ -26,4 +26,4 @@
 - [19 项 T/A/C/L 定向验收](../../../docs/contracts/cloud-edge-sync-v1.md#targeted-matrix)
 - [6 项 Q5 B 人工批准媒体联调](../../../docs/contracts/cloud-edge-sync-v1.md#media-matrix)
 
-Task 2.2 的已批准语义及走读见 [D3](../../../docs/contracts/cloud-edge-sync-v1.md#delivery) 和 [Q6 参数登记](../../../docs/architecture/cloud-edge-sync-v1.md#timing-register)。原完成定义要求确认退避预算。单轮次数/时限及重置条件目前只有开发与测试建议，保持未完成。
+Task 2.2 的 ACK、事务与对账语义见 [D3](../../../docs/contracts/cloud-edge-sync-v1.md#delivery)。负责人已确认 [Q6 P01–P10 原建议值](../../../docs/architecture/cloud-edge-sync-v1.md#timing-register)，批准范围仅为隔离开发与测试。原任务的场景核对见 [Task 2.2 走读证据](../../../docs/verification/cloud-edge-sync-contract-apply.md#task-2-2)。
