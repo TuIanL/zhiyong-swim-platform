@@ -282,6 +282,52 @@ def get_edge_identity(db: Session, authorization: str | None, now: datetime) -> 
     return node, credential
 
 
+def get_edge_identity_unlocked(
+    db: Session, authorization: str | None, now: datetime,
+) -> tuple[EdgeNode, EdgeCredential]:
+    """Authenticate a media request without taking registry locks before Session locks.
+
+    M3 media handlers call ``lock_edge_identity`` after Session → UploadSession → Asset →
+    MediaObject. They then revalidate the credentials while following that lock order.
+    """
+    if not authorization:
+        fail(401, "edge_unauthorized", "缺少Edge凭据")
+    scheme, separator, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not separator or not token.startswith(EDGE_TOKEN_PREFIX) or len(token) > 256:
+        fail(401, "edge_unauthorized", "Edge凭据无效")
+    digest = token_hash(token)
+    credential = db.scalar(select(EdgeCredential).where(EdgeCredential.token_hash == digest))
+    if not credential:
+        fail(401, "edge_unauthorized", "Edge凭据无效")
+    node = db.get(EdgeNode, credential.edge_node_id)
+    if (not node or credential.revoked_at is not None
+            or credential.generation != node.credential_generation
+            or as_utc(credential.expires_at) <= now or node.status != "active"):
+        fail(401, "edge_unauthorized", "Edge凭据无效或节点未激活")
+    return node, credential
+
+
+def lock_edge_identity(db: Session, node_id: str, credential_id: str, now: datetime):
+    """Recheck and serialize the registry identity after media parent locks are held."""
+    node_query = select(EdgeNode).where(EdgeNode.id == node_id).execution_options(populate_existing=True)
+    if db.bind.dialect.name == "postgresql":
+        node_query = node_query.with_for_update()
+    else:
+        db.execute(update(EdgeNode).where(EdgeNode.id == node_id).values(updated_at=EdgeNode.updated_at))
+    node = db.scalar(node_query)
+    credential_query = select(EdgeCredential).where(
+        EdgeCredential.id == credential_id,
+        EdgeCredential.edge_node_id == node_id,
+    ).execution_options(populate_existing=True)
+    if db.bind.dialect.name == "postgresql":
+        credential_query = credential_query.with_for_update()
+    credential = db.scalar(credential_query)
+    if (not node or not credential or node.status != "active" or credential.revoked_at is not None
+            or credential.generation != node.credential_generation or as_utc(credential.expires_at) <= now):
+        fail(401, "edge_unauthorized", "Edge凭据无效或节点未激活")
+    return node, credential
+
+
 @router.get("/tenants/{tenant_id}/sites/{site_id}/edge-nodes", response_model=list[EdgeNodeRead])
 def list_edge_nodes(
     tenant_id: UUID, site_id: UUID, request: Request, user: Current, db: DB,

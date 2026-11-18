@@ -47,3 +47,30 @@ jobs:
             var/postgresql-instance.log
           if-no-files-found: warn
           retention-days: 14
+  media-storage:
+    name: Isolated media transfer (RustFS)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned media probe
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg=7:6.1.1-3ubuntu5
+          ffprobe -version | head -n 1 | grep -F 'ffprobe version 6.1.1'
+      - run: python -m pip install -r requirements-dev.lock
+      - run: python -m pip install -e . --no-deps
+      - name: Run isolated RustFS transfer acceptance
+        run: python scripts/test-rustfs.py
+      - name: Upload RustFS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustfs-media-evidence
+          path: |
+            var/rustfs-test-evidence.json
+            var/rustfs-junit.xml
+          if-no-files-found: warn
+          retention-days: 14

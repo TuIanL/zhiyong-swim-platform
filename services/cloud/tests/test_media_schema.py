@@ -1,4 +1,4 @@
-"""五张新表与幂等扩展的库层约束（SQLite 与 PostgreSQL 共享）。
+"""媒体域与传输支持表的库层约束（SQLite 与 PostgreSQL 共享）。
 
 这些用例直接写库，验证的是数据库本身拒绝非法状态，而不是 API 校验；
 不得被当作业务闭环证据（业务路径见 test_media_foundation/authorization）。
@@ -101,9 +101,116 @@ def test_ready_requires_server_verified_metadata(app, scope):
     with pytest.raises(IntegrityError):
         insert_asset(app, scope, status="ready", checksum=SHA, received=NOW, media="video/mp4")
 
-    insert_asset(
-        app, scope, status="ready", checksum=SHA, received=NOW, media="video/mp4", size=1024
+    # 即使 Asset 字段看起来完整，也必须绑定同scope的已验证物理对象。
+    upload_id, object_id = str(uuid4()), str(uuid4())
+    with app.state.engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO upload_sessions "
+            "(id,tenant_id,site_id,session_id,asset_id,status,initiator_user_id,failure_reason,"
+            "expected_size_bytes,expected_sha256,media_type,expires_at,complete_manifest_hash,"
+            "complete_requested_at,created_at,updated_at) "
+            "VALUES (:id,:tenant,:site,:session,:asset,'completing',:user,NULL,1024,:sha,'video/mp4',"
+            ":expires,:manifest,:now,:now,:now)"
+        ), {
+            "id": upload_id, "tenant": scope["tenant"], "site": scope["site"],
+            "session": scope["session"], "asset": scope["asset"], "user": scope["user"],
+            "sha": SHA, "expires": datetime(2026, 11, 13, 10, 0, tzinfo=UTC),
+            "manifest": "b" * 64, "now": NOW,
+        })
+        connection.execute(text(
+            "INSERT INTO media_objects "
+            "(id,tenant_id,site_id,session_id,asset_id,upload_session_id,provider_profile,bucket,object_key,"
+            "object_version,phase,generation,observed_size_bytes,observed_sha256,observed_media_type,verified_at,"
+            "assembled_at,created_at,updated_at) "
+            "VALUES (:id,:tenant,:site,:session,:asset,:upload,'rustfs-test','synthetic','asset/object',"
+            "'version-1','verified',1,1024,:sha,'video/mp4',:now,:now,:now,:now)"
+        ), {
+            "id": object_id, "tenant": scope["tenant"], "site": scope["site"],
+            "session": scope["session"], "asset": scope["asset"], "upload": upload_id,
+            "sha": SHA, "now": NOW,
+        })
+        connection.execute(text(
+            "UPDATE video_assets SET status='ready', received_at=:now, media_type='video/mp4', size_bytes=1024, "
+            "checksum_sha256=:sha, storage_object_ref=:object, verified_size_bytes=1024, "
+            "verified_media_type='video/mp4', verified_at=:now WHERE id=:asset"
+        ), {"now": NOW, "sha": SHA, "object": object_id, "asset": scope["asset"]})
+        connection.execute(text(
+            "UPDATE upload_sessions SET status='completed', completed_at=:now WHERE id=:id"
+        ), {"now": NOW, "id": upload_id})
+
+
+def insert_upload(app, scope, upload_id):
+    with app.state.engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO upload_sessions "
+            "(id,tenant_id,site_id,session_id,asset_id,status,initiator_user_id,failure_reason,"
+            "expected_size_bytes,expected_sha256,media_type,expires_at,created_at,updated_at) "
+            "VALUES (:id,:tenant,:site,:session,:asset,'uploading',:user,NULL,1024,:sha,'video/mp4',:expires,:now,:now)"
+        ), {
+            "id": upload_id, "tenant": scope["tenant"], "site": scope["site"],
+            "session": scope["session"], "asset": scope["asset"], "user": scope["user"],
+            "sha": SHA, "expires": datetime(2026, 11, 13, 10, 0, tzinfo=UTC), "now": NOW,
+        })
+
+
+def test_media_support_tables_enforce_scope_uniqueness_and_state(app, scope):
+    upload_id = str(uuid4())
+    insert_upload(app, scope, upload_id)
+    object_id = str(uuid4())
+    object_values = {
+        "id": object_id, "tenant": scope["tenant"], "site": scope["site"],
+        "session": scope["session"], "asset": scope["asset"], "upload": upload_id,
+        "now": NOW,
+    }
+    object_sql = text(
+        "INSERT INTO media_objects "
+        "(id,tenant_id,site_id,session_id,asset_id,upload_session_id,provider_profile,bucket,object_key,"
+        "phase,generation,created_at,updated_at) "
+        "VALUES (:id,:tenant,:site,:session,:asset,:upload,'rustfs-test','synthetic',:id,'reserved',1,:now,:now)"
     )
+    with app.state.engine.begin() as connection:
+        connection.execute(object_sql, object_values)
+
+    with pytest.raises(IntegrityError):
+        with app.state.engine.begin() as connection:
+            connection.execute(object_sql, {**object_values, "id": str(uuid4()), "site": str(uuid4())})
+    with pytest.raises(IntegrityError):
+        with app.state.engine.begin() as connection:
+            connection.execute(object_sql, {**object_values, "id": str(uuid4()), "upload": str(uuid4())})
+
+    part_sql = text(
+        "INSERT INTO upload_parts "
+        "(id,tenant_id,site_id,session_id,asset_id,upload_session_id,part_number,expected_size_bytes,state,created_at,updated_at) "
+        "VALUES (:id,:tenant,:site,:session,:asset,:upload,:part,512,'registered',:now,:now)"
+    )
+    part_values = {**object_values, "id": str(uuid4()), "part": 1}
+    with app.state.engine.begin() as connection:
+        connection.execute(part_sql, part_values)
+    with pytest.raises(IntegrityError):
+        with app.state.engine.begin() as connection:
+            connection.execute(part_sql, {**part_values, "id": str(uuid4())})
+    with pytest.raises(IntegrityError):
+        with app.state.engine.begin() as connection:
+            connection.execute(part_sql, {**part_values, "id": str(uuid4()), "part": 0})
+
+    job_sql = text(
+        "INSERT INTO media_jobs "
+        "(id,tenant_id,site_id,session_id,asset_id,object_id,kind,state,attempts,generation,next_attempt_at,"
+        "accepted_actor_kind,accepted_user_id,created_at,updated_at) "
+        "VALUES (:id,:tenant,:site,:session,:asset,:object,:kind,'queued',0,1,:now,:actor,:user,:now,:now)"
+    )
+    job_values = {
+        **object_values, "id": str(uuid4()), "object": object_id, "kind": "initialize",
+        "actor": None, "user": None,
+    }
+    with app.state.engine.begin() as connection:
+        connection.execute(job_sql, job_values)
+    with pytest.raises(IntegrityError):
+        with app.state.engine.begin() as connection:
+            connection.execute(job_sql, {**job_values, "id": str(uuid4()), "actor": "user", "user": scope["user"]})
+    with pytest.raises(IntegrityError):
+        with app.state.engine.begin() as connection:
+            connection.execute(job_sql, {**job_values, "id": str(uuid4()), "session": str(uuid4())})
 
 
 def test_failure_reason_pairs_with_status(app, scope):

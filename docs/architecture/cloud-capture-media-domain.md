@@ -1,19 +1,19 @@
 # 云端采集与媒体领域模型
 
-> **v0.2／Session、Asset、UploadSession 意图与资源授权已实现；传输与 ready 未实现**
+> **v0.3／M2 资源与授权、M3 单对象媒体传输已实现；生产存储与保留政策未冻结**
 >
-> 本文记录负责人于 2026-11-09 第二轮 Proposal 技术审阅通过的设计方向。EdgeNode、Camera Device、EdgeCredential 由 `implement-cloud-edge-device-foundation` 实现；TrainingSession、VideoAsset、UploadSession 的**意图与元数据**、SessionReadGrant/AssetReadGrant 由 `implement-cloud-session-asset-foundation` 实现（2026-11-12 Apply）。分片传输、整对象校验、ready 转换、播放 URL、对象存储与派生创建仍未实现，须由各自业务 Change 交付。
+> 本文保留负责人于 2026-11-09 批准的领域方向，并补记 2026-11-14 M3 Apply 实际实现。Edge Registry、M2 的 Session/Asset/UploadIntent 和资源 grant 已实施；M3 已增加分片传输、整对象校验、ready 转换、播放/下载 URL 与隔离 S3 adapter。派生创建、MediaBlob、生产存储、保留/删除隐私政策、RLS 与云边同步仍未实施或冻结。
 
 - OpenSpec Change：**define-cloud-capture-media-contracts**
 - Proposal 基线：**main@afb0e5fce4c187c8d3c3d5607d2a675375c2a04d**
-- 评审依据：本 Change 第二轮 Proposal 技术审阅通过，D1–D10 方向获批准；文档 Apply 获授权。业务实现仍需另一个行为 Change。
+- 评审依据：本 Change 第二轮 Proposal 技术审阅通过，D1–D10 方向获批准；领域与媒体基础行为已由后续 M2/M3 Changes 实施。生产政策及后续业务能力仍需单独决策和 Change。
 - 配套文档：[API 契约草案](../contracts/cloud-capture-media.md)、[ADR 0003](../decisions/0003-capture-media-domain-contracts.md)、[既有云端领域模型](cloud-domain-model.md)。
 
 ## 1. 范围与当前事实
 
-本草案原先设计EdgeNode、Device、TrainingSession、VideoAsset四个实体。EdgeNode、Camera Device与EdgeCredential现由独立Change实现；TrainingSession、VideoAsset、UploadSession仍是未来设计。训练编排、学员档案及关系、分析任务/结果、对象存储选型、离线同步协议、RLS、生产部署均不在范围内。
+本领域以 EdgeNode、Device、TrainingSession、VideoAsset 为核心，并以 UploadSession 管理一次传输意图。训练编排、学员档案及关系、分析任务/结果、MediaBlob、离线同步协议、RLS、生产部署均不在范围内。
 
-当前已实现的云端包含15张业务表（初始六表、Edge Registry 四表、本片五表）；API为33 paths / 47 operations（基础身份19、Edge Registry 12、本片16）。Edge实现细节见[Cloud Edge Registry模型](cloud-edge-registry-domain.md)与[Registry API契约](../contracts/cloud-edge-registry.md)；本片行为见[媒体契约](../contracts/cloud-capture-media.md)与[RBAC契约](../contracts/cloud-rbac.md)。字段表中的 `storage_object_ref`、`received_at` 与 `ready` 状态仍属 M3；派生的公开创建路径与 `ready` 父级校验未实现。
+当前云端包含19张业务表（身份六表、Edge Registry四表、M2五表、M3四张传输支持表）；API为43 paths / 57 operations（基础身份19、Registry 12、媒体26）。Edge实现细节见[Cloud Edge Registry模型](cloud-edge-registry-domain.md)与[Registry API契约](../contracts/cloud-edge-registry.md)；媒体行为见[媒体契约](../contracts/cloud-capture-media.md)与[RBAC契约](../contracts/cloud-rbac.md)。M3 的 `storage_object_ref`、`received_at`、验证字段与 `ready` 状态已实施；派生的公开创建路径仍未实现。
 
 ## 2. 概念 ERD 与基数
 
@@ -32,7 +32,7 @@ erDiagram
     USERS o|--o{ VIDEO_ASSETS : user_creator
 ~~~
 
-Tenant、Site、User是既有实体；本Change不改动其表结构。EdgeNode、Device和EdgeCredential已有独立增量实现；本草案中其余实体与UploadSession仍是未来设计。Session/Asset读取授权是权限语义叠加在资源上的概念关系，**不是已建表或现有API**。
+Tenant、Site、User是既有实体；本领域 Change 不改动其身份表结构。EdgeNode、Device、EdgeCredential由Registry Change实现；TrainingSession、VideoAsset、UploadSession与两类读取grant由M2实现，M3增加媒体传输支持表及API。核心实体和支持实体在ERD中分层，MediaBlob仍未建表。
 
 | 关系 | 基数与必选性 | 推荐归属约束 |
 | --- | --- | --- |
@@ -46,9 +46,9 @@ Tenant、Site、User是既有实体；本Change不改动其表结构。EdgeNode�
 | VideoAsset → 派生父 Asset | 一个父 Asset 可有零到多个派生 Asset；派生父关系可空 | 父子必须同 tenant/site/session；父 Asset 创建时已 ready；父引用不可变 |
 | VideoAsset → UploadSession | 一个逻辑 Asset 恰有零或一条上传意图；每条上传意图只指向一个 Asset | 支持记录复合引用 Asset；失败或过期后的新采集意图使用新 Asset ID |
 
-### 2.1 归属与复合键建议
+### 2.1 归属与复合键设计
 
-以下唯一键和外键是设计建议，不是迁移：
+以下表格保留原设计阶段的键/外键方向，具体落地由已实施的 M2/M3 迁移和模型约束负责；派生 Asset 创建与 MediaBlob 仍未实施：
 
 | 实体 | 主键及候选复合唯一键 | 关键复合外键 |
 | --- | --- | --- |
@@ -71,11 +71,11 @@ Tenant、Site、User是既有实体；本Change不改动其表结构。EdgeNode�
 - VideoAsset：(tenant_id, site_id, session_id, created_at, id)；支持会话内稳定游标；checksum 不建立逻辑唯一索引。
 - EdgeCredential：token_hash 唯一索引；复合归属字段索引视凭据认证查询形态决定。
 - UploadSession：(tenant_id, site_id, session_id, status, expires_at)；asset_id 唯一索引。
-- 面向授权的索引只在授权记录物理模型经后续设计后选择；本 Change 不假设授权表存在。
+- M2 已建立 Session 与 Asset read grant 持久表并记录授权主体/时间；索引和查询实现以当前 ORM/迁移为准。
 
-## 3. 字段设计方向
+## 3. 字段设计与实施边界
 
-类型是概念取向：UUID 标识、UTC 时间戳、短枚举、有限长度字符串、整数/十进制数和 JSON 对象。字段最终类型、server default、校验规则和迁移兼容性须在业务实施 Change 定案。除明确标为可空外，字段为建议必填。所有创建/更新时间由可信云端生成；客户端不可自报创建者或租户归属。
+字段类型与可空性以 M2/M3 已实施模型和迁移为准；本节字段列表保留批准的概念模型，其中尚未实施的派生关系等仍属未来设计。所有已实现创建/更新时间由可信云端生成；客户端不可自报创建者或租户归属。
 
 ### 3.1 EdgeNode
 
@@ -153,8 +153,12 @@ Session 不绑定单个 EdgeNode；同一 Session 可以汇集多设备的独立
 | --- | --- | --- |
 | EdgeCredential | id、tenant/site/edge_node_id、token_hash、issued_at、expires_at、revoked_at、issued_by_user_id | token_hash 唯一；不存明文；节点停用时凭据失效，重新启用需新凭据 |
 | UploadSession | id、tenant/site/session_id/asset_id、status、initiator_user_id、initiator_edge_node_id、expected_size_bytes、expected_sha256、expires_at、created_at、completed_at | 仅一个发起主体：用户或节点恰一；asset_id 唯一；绑定原创建主体；服务端整对象校验之前不得将 Asset 置 ready |
+| MediaObject | server profile/bucket/key、provider upload/version id、phase、generation、observed/verified 摘要 | 服务端对象映射；不将 key 暴露给客户端；同内容不合并逻辑来源 |
+| UploadPart | part number、expected/actual size、ETag、确认时间与状态 | 按对象存储回执核实；丢失确认可恢复 |
+| MediaJob | initialize/complete 状态、attempt、lease、generation、接受身份快照 | 持久恢复；外部存储和 ffprobe I/O 在事务外；最终提交重新核验授权 |
+| MediaCleanupCandidate | 精确对象版本/MPU、状态、观察时间、期限、lease 与错误码 | 双次观察与宽限；默认 dry-run；隔离 CI 可按精确归属清理 |
 
-EdgeCredential 和 UploadSession 是完整契约说明所需的支持概念，其字段并不表示本 Change 创建表。资源读取 grant 的持久化表/关联方式也留待业务实施设计；D3/D8 的授权效果必须由后续实施实现。
+EdgeCredential、UploadSession、两类读取 grant 与上述四张媒体支持表均已由各自实施 Change 建立。媒体支持表不替代 VideoAsset 的逻辑身份，也不建立 MediaBlob。
 
 ## 4. 身份、来源和不可变约束
 
@@ -178,7 +182,7 @@ EdgeCredential 和 UploadSession 是完整契约说明所需的支持概念，�
 
 UploadSession 与 VideoAsset 的终态必须在同一数据库事务中配对更新：完整对象验证成功后才能原子提交 `UploadSession.completed + VideoAsset.ready`；校验失败提交 `failed + failed`，显式中止提交 `aborted + failed`，到期提交 `expired + failed`。尚未 ready 的资产不允许随着 UploadSession 进入终态而遗留在 pending_upload。UploadIntentCreate 也应原子创建 Asset 与 UploadSession。
 
-Session 取消、complete、abort 与 expiry 竞争时，对 Session、UploadSession、Asset 的检查和状态更新必须串行化或用条件更新确保仅一个合法事务获胜。若取消先获胜，所有未完成的关联上传以 `session_cancelled` 原因进入 UploadSession.failed，Asset 同事务进入 failed；之后 complete 返回 409。若 complete 的完整性确认先获胜，则原子提交 completed/ready，之后取消不得回退或删除该 Asset。若数据库事务提交失败，不能只提交其中一侧的终态；同一请求可安全重试并读取唯一最终结果。到期处理需要可重试地终结过期的 uploading/completing 会话，避免永久 pending_upload；对象存储残留清理仍按后续存储策略设计。Session completed 后允许合规补传但不回退 Session 状态。分片回执只证明分片传输，不证明整对象 ready。
+Session 取消、complete、abort 与 expiry 竞争通过统一事务锁顺序和短事务状态重查串行化。实现顺序为 `Session → UploadSession → Asset → media_objects → media_jobs/parts/cleanup`；对象存储 I/O 在事务外。取消先获胜时，未完成上传以 `session_cancelled` 使 UploadSession.failed、Asset.failed；完整性提交先获胜则 completed/ready 不可回退。`completing` 可显式中止/到期；迟到 worker 不能改写先提交的失败原因或提交 ready。Session completed 后允许合规补传但不回退 Session 状态。分片回执只证明单片传输，不证明整对象 ready。
 
 Edge 离线可生成临时本地 Session/采集记录并保留录像；恢复联网后可提交同步。云端仍是 Session 最终业务权威，本地临时 ID/状态/创建者声明不会直接覆盖云端记录。云边授权、ID 映射、重复检测与状态冲突协议另开 Change，本稿不定义 Outbox/Inbox 或同步算法。
 
@@ -186,10 +190,17 @@ Edge 离线可生成临时本地 Session/采集记录并保留录像；恢复联
 
 - 四实体均不提供 DELETE API；EdgeNode/Device 使用停用，Session 使用取消，Asset 保留状态与来源。
 - Site/Tenant 将来接入历史媒体后，不得经父级删除或 CASCADE 清除历史 Session、Asset、来源、授权审计或仍被保留的内容引用。存在历史资产、活动引用或未满足保留/处置条件时，应先停用/归档并保持稳定父 ID。
-- 物理对象只有在后续批准的保留/处置策略允许、且不存在其他需保留逻辑 Asset 引用时才能清理；删除一条逻辑引用不能误删共享内容。
+- 技术残留回收不等于隐私/保留删除。M3 实现隔离 CI 的 dry-run 默认清理，可在精确归属、双次观察、宽限、无逻辑引用和精确版本核验后回收失败/孤儿对象；生产保留、删除、备份和审计政策未冻结，不得启用生产媒体存储。
 - 本地采集原件不因云端 Asset ready 自动变成可删除缓存；清理须满足独立保留策略和云端确认。
-- 本文不设定保留天数、删除/导出接口、外键 ondelete、软删除字段或物理存储回收实现。既有六表 CASCADE 是现状，不能自动扩展为未来媒体策略。
+- 本文不设定生产保留天数、删除/导出接口、外键 ondelete 或软删除字段。隔离环境的技术清理实现不构成生产媒体处置策略；既有六表 CASCADE 是现状，不能自动扩展为未来媒体策略。
 
-## 7. 设计追溯
+## 7. M3 Apply 实施补记（2026-11-14）
+
+- 新建上传意图采用2 GiB上限、16 MiB分片，每次最多签发100个Part URL，写URL最长300秒；保留 M2 意图 TTL。历史大于2 GiB的意图仍可读、同键重放、中止和过期，物理准备拒绝为 `transfer_policy_conflict`。
+- User/Edge 使用统一 `StorageProvider` 协议和 S3 adapter；boto3 与 RustFS profile 固定在 Change/CI。RustFS 是可销毁隔离测试服务，不代表生产厂商或区域选择。
+- Complete 使用持久 worker、有限重试/租约、真实全对象 SHA-256、字节数核对及固定 ffprobe 版本验证 MP4 容器；不转码。访问 URL 默认60秒且硬上限300秒，不晚于当前身份/授权期限。最终 ready 前重验原 User Session 或 Edge Credential、Device/Node、资源授权、Session、期限、generation 与精确对象版本。
+- 生产视频存储仍关闭。用户/监护人同意、保留、备份和隐私删除政策未冻结；技术孤儿清理不会删除 ready Asset 或本地原件。HLS、转码、MediaBlob、分析流水线、M4同步、即时撤权代理及离线身份恢复另属后续范围。
+
+## 8. 设计追溯
 
 完整 C1–C5、D1–D10 决策记录和替代方案见 [ADR 0003](../decisions/0003-capture-media-domain-contracts.md)；端点与资源授权规则见 [API 契约草案](../contracts/cloud-capture-media.md)。本草案不声称主规格已同步、业务代码/数据库已实现、RLS/生产已验证。

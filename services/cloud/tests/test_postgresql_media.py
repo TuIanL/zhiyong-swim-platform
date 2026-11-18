@@ -1,22 +1,30 @@
 """PostgreSQL 专属：真实并发、降级守卫与受限外键（需专用可销毁实例）。"""
 import threading
 import time
+from hashlib import sha256
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.exc import IntegrityError
 from swimplatform.config import ROOT, Settings
 from swimplatform.main import create_app
+from swimplatform.media_transfer import (
+    _claim_job, _finalize_ready, _job_current, cleanup_candidates, sweep_expired,
+)
+from swimplatform.models import (
+    IdempotencyRecord, MediaCleanupCandidate, MediaJob, MediaObject, UploadPart, UploadSession, VideoAsset,
+)
+from swimplatform.security import token_hash
 
 from pg_support import CONCURRENCY_POOL, run_concurrently
 
 pytestmark = pytest.mark.postgresql
 
-HEAD_REVISION = "20261112_0003"
+HEAD_REVISION = "20261114_0004"
 REGISTRY_REVISION = "20261110_0002"
 SHA = "a" * 64
 META = {"device_time_basis": "unknown", "video_timebase_kind": "relative", "device_clock_source": "unknown"}
@@ -401,6 +409,7 @@ class ControlledRace:
         self.lock_wait = None
         self.monitor_pid = None
         self._locks = 0
+        self.armed = False
         engine = app.state.engine
         event.listen(engine, "before_cursor_execute", self._before)
         event.listen(engine, "after_cursor_execute", self._after)
@@ -413,6 +422,16 @@ class ControlledRace:
     def _matches(self, statement):
         return self.predicate(statement.lower())
 
+    def arm(self):
+        self.first_locked.clear()
+        self.second_query_entered.clear()
+        self.release.clear()
+        self.pids.clear()
+        self.lock_wait = None
+        self.monitor_pid = None
+        self._locks = 0
+        self.armed = True
+
     @staticmethod
     def _pid(connection):
         return connection.connection.driver_connection.info.backend_pid
@@ -420,18 +439,18 @@ class ControlledRace:
     def _before(self, connection, cursor, statement, parameters, context, executemany):
         # 第一条请求已持锁暂停时，第二条请求到达同一锁 SQL 的执行入口。
         # 是否已进入 PostgreSQL 锁等待由独立监控连接另外确认。
-        if self._matches(statement) and self._locks == 1:
+        if self.armed and self._matches(statement) and self._locks == 1:
             self.pids["second"] = self._pid(connection)
             self.second_query_entered.set()
 
     def _after(self, connection, cursor, statement, parameters, context, executemany):
-        if not self._matches(statement):
+        if not self.armed or not self._matches(statement):
             return
         self._locks += 1
         if self._locks == 1:
             self.pids["first"] = self._pid(connection)
             self.first_locked.set()
-            if not self.release.wait(20):
+            if not self.release.wait(45):
                 raise AssertionError("持锁请求没有等到放行信号")
 
     def run(self, job):
@@ -473,6 +492,7 @@ class ControlledRace:
 
 
 def run_ordered(race, first_job, second_job, record_property):
+    race.arm()
     results = {}
 
     def first():
@@ -599,7 +619,7 @@ def test_expiry_first_blocks_abort_from_rewriting_reason(
 ):
     database = pg_databases()
     application, engine = _pooled_app(database)
-    race = ControlledRace(application, UPLOAD_LOCK, pg_environment, database.name)
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
     try:
         with TestClient(application) as client:
             org = seed_scope(client, lambda name: seeded_account(name, application=application))
@@ -689,4 +709,526 @@ def test_abort_before_expiry_remains_terminal_after_clock_advance(pg_databases, 
         assert upload_after_read.failure_reason != "upload_expired"
         assert asset_after_read.failure_reason != "upload_expired"
     finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("action", ["cancel", "abort", "expiry"])
+@pytest.mark.parametrize("first", ["finalize", "action"])
+def test_media_finalize_races_preserve_serial_terminal_state(
+    pg_databases, seeded_account, pg_environment, record_property, action, first
+):
+    database = pg_databases()
+    application, engine = _pooled_app(database)
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
+    try:
+        with TestClient(application) as client:
+            org = seed_scope(client, lambda name: seeded_account(name, application=application))
+            session = make_session(client, org)
+            intent_response = client.post(
+                org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+                headers={**org["ch"], "Idempotency-Key": f"finalize-race-{action}-{first}"},
+                json=intent_payload(),
+            )
+            assert intent_response.status_code == 201, intent_response.text
+            upload_id = intent_response.json()["upload_session"]["id"]
+            asset_id = intent_response.json()["asset"]["id"]
+            now = datetime.now(UTC)
+            deadline = now + timedelta(minutes=5)
+            auth_hash = token_hash(org["ch"]["Authorization"].split(" ", 1)[1])
+            with application.state.sessions() as db:
+                upload = db.get(UploadSession, upload_id)
+                upload.status = "completing"
+                upload.complete_manifest_hash = "c" * 64
+                upload.complete_requested_at = now
+                upload.expires_at = deadline
+                obj = MediaObject(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                    asset_id=asset_id, upload_session_id=upload_id, provider_profile="s3",
+                    bucket="test-bucket", object_key=f"private/test/{upload_id}/g1",
+                    provider_upload_id="test-multipart", object_version="version-1",
+                    phase="assembled", generation=1, assembled_at=now,
+                    created_at=now, updated_at=now,
+                )
+                db.add(obj)
+                db.flush()
+                job = MediaJob(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                    asset_id=asset_id, object_id=obj.id, kind="complete", state="running",
+                    attempts=1, generation=1, lease_token="finalize-race-token",
+                    lease_until=now + timedelta(minutes=5), next_attempt_at=now,
+                    accepted_actor_kind="user", accepted_user_id=org["coach"]["id"],
+                    accepted_auth_session_hash=auth_hash, created_at=now, updated_at=now,
+                )
+                db.add(job)
+                db.commit()
+                snapshot = {"id": job.id, "object_id": obj.id, "upload_id": upload_id,
+                            "token": job.lease_token, "generation": job.generation,
+                            "tenant_id": upload.tenant_id, "site_id": upload.site_id}
+                object_snapshot = {"id": obj.id, "key": obj.object_key,
+                                   "upload_id": obj.provider_upload_id, "version": obj.object_version,
+                                   "generation": obj.generation}
+
+        class HeadOnlyProvider:
+            def head_object(self, key, version_id):
+                assert key == object_snapshot["key"] and version_id == "version-1"
+                return {"version_id": "version-1", "size": 4096}
+
+        provider = HeadOnlyProvider()
+
+        def finalize(_client):
+            return _finalize_ready(
+                application.state.sessions, provider, snapshot, object_snapshot, "version-1",
+                size=4096, sha256=sha256(b"race-media").hexdigest(), media_type="video/mp4",
+                now=datetime.now(UTC),
+            )
+
+        def run_action(client):
+            if action == "cancel":
+                return client.patch(
+                    org["base"] + f"/training-sessions/{session['id']}", headers=org["ch"],
+                    json={"status": "cancelled"},
+                )
+            if action == "abort":
+                return client.post(org["base"] + f"/upload-sessions/{upload_id}/abort", headers=org["ch"])
+            return sweep_expired(application.state.sessions, now=deadline + timedelta(seconds=1))
+
+        if first == "finalize":
+            results = run_ordered(race, finalize, run_action, record_property)
+        else:
+            results = run_ordered(race, run_action, finalize, record_property)
+        assert race.pids["first"] != race.pids["second"]
+        assert race.lock_wait["wait_event_type"] == "Lock"
+
+        with application.state.sessions() as db:
+            stored_upload = db.get(UploadSession, upload_id)
+            stored_asset = db.get(VideoAsset, asset_id)
+            if first == "finalize":
+                assert stored_upload.status == "completed"
+                assert stored_asset.status == "ready"
+                assert stored_asset.storage_object_ref is not None
+                if action == "cancel":
+                    assert results["second"].status_code == 200
+                elif action == "abort":
+                    assert results["second"].status_code == 204
+                else:
+                    assert results["second"] == 0
+            else:
+                if action == "cancel":
+                    assert results["first"].status_code == 200
+                    assert (stored_upload.status, stored_upload.failure_reason) == ("failed", "session_cancelled")
+                elif action == "abort":
+                    assert results["first"].status_code == 204
+                    assert (stored_upload.status, stored_upload.failure_reason) == ("aborted", "upload_aborted")
+                else:
+                    assert results["first"] == 1
+                    assert stored_upload.status == "expired"
+                    assert stored_upload.failure_reason == "upload_expired"
+                assert stored_asset.status == "failed"
+                assert stored_asset.storage_object_ref is None
+    finally:
+        race.close()
+        engine.dispose()
+
+
+def test_concurrent_same_key_complete_accepts_one_durable_job(
+    pg_databases, seeded_account, pg_environment, record_property
+):
+    from dataclasses import replace
+
+    database = pg_databases()
+    application, engine = _pooled_app(database)
+    application.state.settings = replace(application.state.settings, media_enabled=True)
+
+    class NoIOProvider:
+        profile = "s3"
+        bucket = "pg-concurrency-test"
+
+    application.state.storage_provider = NoIOProvider()
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
+    try:
+        with TestClient(application) as client:
+            org = seed_scope(client, lambda name: seeded_account(name, application=application))
+            session = make_session(client, org)
+            created = client.post(
+                org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+                headers={**org["ch"], "Idempotency-Key": "complete-race-intent"},
+                json=intent_payload(),
+            )
+            assert created.status_code == 201, created.text
+            upload_id = created.json()["upload_session"]["id"]
+            asset_id = created.json()["asset"]["id"]
+            now = datetime.now(UTC)
+            with application.state.sessions() as db:
+                upload = db.get(UploadSession, upload_id)
+                upload.part_size_bytes, upload.part_count = 16 * 1024 * 1024, 1
+                obj = MediaObject(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                    asset_id=asset_id, upload_session_id=upload_id, provider_profile="s3",
+                    bucket="pg-concurrency-test", object_key=f"private/test/{upload_id}/g1",
+                    provider_upload_id="pg-multipart-1", phase="uploading", generation=1,
+                    created_at=now, updated_at=now,
+                )
+                db.add(obj)
+                db.flush()
+                db.add(UploadPart(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id,
+                    session_id=upload.session_id, asset_id=asset_id, upload_session_id=upload_id,
+                    part_number=1, expected_size_bytes=4096, state="confirmed", etag='"pg-etag"',
+                    actual_size_bytes=4096, confirmed_at=now, created_at=now, updated_at=now,
+                ))
+                db.commit()
+
+        url = org["base"] + f"/upload-sessions/{upload_id}/complete"
+        headers = {**org["ch"], "Idempotency-Key": "complete-race-same-key"}
+        body = {"parts": [{"part_number": 1, "etag": '"pg-etag"'}]}
+        results = run_ordered(
+            race,
+            lambda client: client.post(url, headers=headers, json=body),
+            lambda client: client.post(url, headers=headers, json=body),
+            record_property,
+        )
+        assert results["first"].status_code == results["second"].status_code == 202
+        assert race.pids["first"] != race.pids["second"]
+        assert race.lock_wait["wait_event_type"] == "Lock"
+        with application.state.sessions() as db:
+            upload = db.get(UploadSession, upload_id)
+            obj = db.scalar(select(MediaObject).where(MediaObject.upload_session_id == upload_id))
+            jobs = db.scalars(select(MediaJob).where(
+                MediaJob.object_id == obj.id, MediaJob.kind == "complete",
+            )).all()
+            records = db.scalars(select(IdempotencyRecord).where(
+                IdempotencyRecord.operation == "upload.complete",
+                IdempotencyRecord.target_id == upload_id,
+            )).all()
+            assert upload.status == "completing"
+            assert len(jobs) == 1
+            assert len(records) == 1
+        with TestClient(application) as client:
+            logged_out = client.post("/api/v1/auth/logout", headers=org["ch"])
+        assert logged_out.status_code == 204, logged_out.text
+    finally:
+        race.close()
+        engine.dispose()
+
+
+def test_concurrent_same_part_confirmation_is_idempotent_on_independent_backends(
+    pg_databases, seeded_account, pg_environment, record_property
+):
+    from dataclasses import replace
+
+    database = pg_databases()
+    application, engine = _pooled_app(database)
+    application.state.settings = replace(application.state.settings, media_enabled=True)
+
+    class PartProvider:
+        profile = "s3"
+        bucket = "pg-concurrency-test"
+
+        def list_parts(self, key, upload_id, marker):
+            assert key.endswith("/g1") and upload_id == "pg-multipart-2" and marker == 0
+            return {"parts": [{"PartNumber": 1, "ETag": '"pg-etag-2"', "Size": 4096}],
+                    "truncated": False, "next_marker": None}
+
+    application.state.storage_provider = PartProvider()
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
+    try:
+        with TestClient(application) as client:
+            org = seed_scope(client, lambda name: seeded_account(name, application=application))
+            session = make_session(client, org)
+            created = client.post(
+                org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+                headers={**org["ch"], "Idempotency-Key": "confirm-race-intent"},
+                json=intent_payload(),
+            )
+            assert created.status_code == 201, created.text
+            upload_id = created.json()["upload_session"]["id"]
+            asset_id = created.json()["asset"]["id"]
+            now = datetime.now(UTC)
+            with application.state.sessions() as db:
+                upload = db.get(UploadSession, upload_id)
+                upload.part_size_bytes, upload.part_count = 16 * 1024 * 1024, 1
+                obj = MediaObject(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                    asset_id=asset_id, upload_session_id=upload_id, provider_profile="s3",
+                    bucket="pg-concurrency-test", object_key=f"private/test/{upload_id}/g1",
+                    provider_upload_id="pg-multipart-2", phase="uploading", generation=1,
+                    created_at=now, updated_at=now,
+                )
+                db.add(obj)
+                db.add(UploadPart(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id,
+                    session_id=upload.session_id, asset_id=asset_id, upload_session_id=upload_id,
+                    part_number=1, expected_size_bytes=4096, state="registered", created_at=now,
+                    updated_at=now,
+                ))
+                db.commit()
+
+        url = org["base"] + f"/upload-sessions/{upload_id}/parts/1"
+        headers = org["ch"]
+        body = {"etag": '"pg-etag-2"', "size_bytes": 4096}
+        results = run_ordered(
+            race,
+            lambda client: client.put(url, headers=headers, json=body),
+            lambda client: client.put(url, headers=headers, json=body),
+            record_property,
+        )
+        assert results["first"].status_code == results["second"].status_code == 200
+        assert race.pids["first"] != race.pids["second"]
+        assert race.lock_wait["wait_event_type"] == "Lock"
+        assert results["first"].json() == results["second"].json()
+        with application.state.sessions() as db:
+            part = db.scalar(select(UploadPart).where(UploadPart.upload_session_id == upload_id))
+            assert part.state == "confirmed"
+            assert part.etag == '"pg-etag-2"' and part.actual_size_bytes == 4096
+            assert part.confirmed_at is not None
+    finally:
+        race.close()
+        engine.dispose()
+
+
+def test_concurrent_part_prepare_reserves_one_media_object_and_job(
+    pg_databases, seeded_account, pg_environment, record_property
+):
+    from dataclasses import replace
+
+    database = pg_databases()
+    application, engine = _pooled_app(database)
+    application.state.settings = replace(application.state.settings, media_enabled=True)
+
+    class NoIOProvider:
+        profile = "s3"
+        bucket = "pg-concurrency-test"
+
+    application.state.storage_provider = NoIOProvider()
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
+    try:
+        with TestClient(application) as client:
+            org = seed_scope(client, lambda name: seeded_account(name, application=application))
+            session = make_session(client, org)
+            created = client.post(
+                org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+                headers={**org["ch"], "Idempotency-Key": "prepare-race-intent"},
+                json=intent_payload(),
+            )
+            assert created.status_code == 201, created.text
+            upload_id = created.json()["upload_session"]["id"]
+
+        url = org["base"] + f"/upload-sessions/{upload_id}/part-urls"
+        headers, body = org["ch"], {"part_numbers": [1]}
+        results = run_ordered(
+            race,
+            lambda client: client.post(url, headers=headers, json=body),
+            lambda client: client.post(url, headers=headers, json=body),
+            record_property,
+        )
+        assert results["first"].status_code == results["second"].status_code == 202
+        assert race.pids["first"] != race.pids["second"]
+        assert race.lock_wait["wait_event_type"] == "Lock"
+        with application.state.sessions() as db:
+            obj = db.scalar(select(MediaObject).where(MediaObject.upload_session_id == upload_id))
+            jobs = db.scalars(select(MediaJob).where(
+                MediaJob.object_id == obj.id, MediaJob.kind == "initialize",
+            )).all()
+            upload = db.get(UploadSession, upload_id)
+            assert obj.phase == "preparing"
+            assert len(jobs) == 1
+            assert (upload.part_size_bytes, upload.part_count) == (16 * 1024 * 1024, 1)
+    finally:
+        race.close()
+        engine.dispose()
+
+
+def test_postgresql_expired_worker_lease_takeover_rejects_old_generation(
+    pg_databases, seeded_account, record_property
+):
+    from sqlalchemy.orm import sessionmaker
+
+    database = pg_databases()
+    application, engine = _pooled_app(database)
+    now = datetime.now(UTC)
+    try:
+        with TestClient(application) as client:
+            org = seed_scope(client, lambda name: seeded_account(name, application=application))
+            session = make_session(client, org)
+            created = client.post(
+                org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+                headers={**org["ch"], "Idempotency-Key": "lease-takeover-intent"},
+                json=intent_payload(),
+            )
+            assert created.status_code == 201, created.text
+            upload_id = created.json()["upload_session"]["id"]
+            asset_id = created.json()["asset"]["id"]
+            with application.state.sessions() as db:
+                upload = db.get(UploadSession, upload_id)
+                obj = MediaObject(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                    asset_id=asset_id, upload_session_id=upload_id, provider_profile="s3",
+                    bucket="pg-concurrency-test", object_key=f"private/test/{upload_id}/g1",
+                    phase="reserved", generation=1, created_at=now, updated_at=now,
+                )
+                db.add(obj)
+                db.flush()
+                db.add(MediaJob(
+                    tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                    asset_id=asset_id, object_id=obj.id, kind="initialize", state="queued",
+                    attempts=0, generation=1, next_attempt_at=now, created_at=now, updated_at=now,
+                ))
+                db.commit()
+
+        with engine.connect() as first_connection, engine.connect() as second_connection:
+            first_pid = first_connection.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            first_connection.commit()
+            second_pid = second_connection.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            second_connection.commit()
+            assert first_pid != second_pid
+            first_factory = sessionmaker(first_connection, expire_on_commit=False)
+            second_factory = sessionmaker(second_connection, expire_on_commit=False)
+            first_snapshot = _claim_job(first_factory, now)
+            assert first_snapshot and first_snapshot["generation"] == 2
+            with second_factory() as db:
+                job = db.get(MediaJob, first_snapshot["id"])
+                job.lease_until = now - timedelta(seconds=1)
+                db.commit()
+            second_snapshot = _claim_job(second_factory, now + timedelta(seconds=1))
+            assert second_snapshot and second_snapshot["generation"] == 3
+            assert second_snapshot["token"] != first_snapshot["token"]
+            with first_factory() as db:
+                assert not _job_current(db, first_snapshot)
+            with second_factory() as db:
+                assert _job_current(db, second_snapshot)
+            record_property("lease_takeover_first_backend_pid", str(first_pid))
+            record_property("lease_takeover_second_backend_pid", str(second_pid))
+            record_property("old_generation_rejected", "true")
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("first", ["finalize", "cleanup"])
+def test_postgresql_cleanup_candidate_cannot_race_ready_finalize(
+    pg_databases, seeded_account, pg_environment, record_property, monkeypatch, first
+):
+    from dataclasses import replace
+
+    database = pg_databases()
+    application, engine = _pooled_app(database)
+    run_id = pg_environment.run_id
+    application.state.settings = replace(
+        application.state.settings, media_enabled=True, media_environment="isolated-test",
+        media_profile="rustfs-isolated", media_run_id=run_id,
+        media_bucket="pg-concurrency-test", media_endpoint_url="http://127.0.0.1:9000",
+        media_access_key="test-access", media_secret_key="test-secret",
+    )
+    monkeypatch.setenv("SWIM_MEDIA_CLEANUP_ALLOW_EXECUTE", "true")
+
+    class NoDeleteProvider:
+        profile = "rustfs-isolated"
+        bucket = "pg-concurrency-test"
+
+        def list_object_versions(self, prefix, key_marker, version_marker, *, max_keys):
+            assert prefix == f"private/test/{run_id}/"
+            return {"versions": [], "truncated": False,
+                    "key_marker": None, "version_marker": None}
+
+        def head_object(self, key, version_id):
+            assert key.endswith("/object") and version_id == "version-1"
+            return {"version_id": version_id, "size": 4096}
+
+        def delete_object(self, key, version_id):
+            pytest.fail("a queued cleanup candidate must never delete an object that finalizes ready")
+
+    provider = NoDeleteProvider()
+    race = ControlledRace(application, SESSION_LOCK, pg_environment, database.name)
+    try:
+        with TestClient(application) as client:
+            org = seed_scope(client, lambda name: seeded_account(name, application=application))
+            session = make_session(client, org)
+            created = client.post(
+                org["base"] + f"/training-sessions/{session['id']}/upload-sessions",
+                headers={**org["ch"], "Idempotency-Key": "cleanup-finalize-race-intent"},
+                json=intent_payload(),
+            )
+            assert created.status_code == 201, created.text
+            upload_id, asset_id = created.json()["upload_session"]["id"], created.json()["asset"]["id"]
+
+        now = datetime.now(UTC)
+        observed_hash = sha256(b"race-media").hexdigest()
+        with application.state.sessions() as db:
+            upload = db.get(UploadSession, upload_id)
+            upload.status = "completing"
+            upload.complete_manifest_hash = "b" * 64
+            upload.complete_requested_at = now
+            upload.expected_sha256 = observed_hash
+            obj = MediaObject(
+                tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                asset_id=asset_id, upload_session_id=upload_id, provider_profile="rustfs-isolated",
+                bucket="pg-concurrency-test", object_key=f"private/test/{run_id}/{upload_id}/object",
+                provider_upload_id="pg-multipart-gc-race", object_version="version-1",
+                phase="assembled", generation=1, assembled_at=now, created_at=now, updated_at=now,
+            )
+            db.add(obj)
+            db.flush()
+            db.add(MediaJob(
+                tenant_id=upload.tenant_id, site_id=upload.site_id, session_id=upload.session_id,
+                asset_id=asset_id, object_id=obj.id, kind="complete", state="queued", attempts=0,
+                generation=1, next_attempt_at=now, accepted_actor_kind="user",
+                accepted_user_id=upload.initiator_user_id,
+                accepted_auth_session_hash=token_hash(org["ch"]["Authorization"].removeprefix("Bearer ")),
+                created_at=now, updated_at=now,
+            ))
+            db.add(MediaCleanupCandidate(
+                tenant_id=upload.tenant_id, site_id=upload.site_id, object_id=obj.id,
+                session_id=upload.session_id, asset_id=asset_id,
+                provider_profile="rustfs-isolated", bucket="pg-concurrency-test",
+                object_key=obj.object_key, object_version="version-1", kind="object",
+                identity_hash=sha256(f"gc-race\0{upload_id}".encode()).hexdigest(),
+                first_seen_at=now, last_seen_at=now, not_before=now,
+                state="queued", attempts=0, next_attempt_at=now, generation=1,
+                created_at=now, updated_at=now,
+            ))
+            db.commit()
+
+        with application.state.sessions() as db:
+            job = db.scalar(select(MediaJob).where(MediaJob.object_id == obj.id, MediaJob.kind == "complete"))
+        snapshot = _claim_job(application.state.sessions, now)
+        assert snapshot and snapshot["id"] == job.id
+        object_snapshot = {
+            "id": obj.id, "key": obj.object_key, "upload_id": "pg-multipart-gc-race",
+            "version": "version-1", "generation": 1,
+        }
+
+        def finalize(_client):
+            return _finalize_ready(
+                application.state.sessions, provider, snapshot, object_snapshot, "version-1",
+                size=4096, sha256=observed_hash, media_type="video/mp4", now=now,
+            )
+
+        def cleanup(_client):
+            return cleanup_candidates(
+                application.state.sessions, provider, application.state.settings,
+                execute=True, limit=10, now=now,
+            )
+
+        results = (run_ordered(race, finalize, cleanup, record_property) if first == "finalize"
+                   else run_ordered(race, cleanup, finalize, record_property))
+        assert race.pids["first"] != race.pids["second"]
+        assert race.lock_wait["wait_event_type"] == "Lock"
+        with application.state.sessions() as db:
+            stored_upload = db.get(UploadSession, upload_id)
+            stored_asset = db.get(VideoAsset, asset_id)
+            stored_object = db.get(MediaObject, obj.id)
+            candidate = db.scalar(select(MediaCleanupCandidate).where(
+                MediaCleanupCandidate.object_id == obj.id,
+            ))
+            assert (stored_upload.status, stored_asset.status) == ("completed", "ready")
+            assert stored_asset.storage_object_ref == obj.id
+            assert stored_object.phase == "verified"
+            assert candidate.state == "manual"
+            assert candidate.last_error_code in {"active_upload", "retained_asset_reference"}
+        cleanup_result = results["first"] if first == "cleanup" else results["second"]
+        assert cleanup_result["removed"] == 0
+        assert cleanup_result["failed"] == 0
+        record_property("gc_finalize_outcome", first)
+        record_property("ready_preserved", "true")
+    finally:
+        race.close()
         engine.dispose()

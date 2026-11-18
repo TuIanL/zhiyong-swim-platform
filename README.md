@@ -1,6 +1,6 @@
 # 智泳云枢 · 新版平台
 
-独立重建的游泳智能视频分析平台。当前开发切片包含**账号、机构、场馆与 Cloud Edge Registry 基础**。
+独立重建的游泳智能视频分析平台。当前 main 已含账号、机构、场馆与 Cloud Edge Registry；Draft PR #6 的 M3 Apply 正在补齐 Cloud Media Transfer，尚待独立 Verify。
 
 仓库：[TuIanL/zhiyong-swim-platform](https://github.com/TuIanL/zhiyong-swim-platform)。产品需求与任务：[Notion 项目](https://app.notion.com/p/410f602574aa816ea4a6f2b06985d412)。
 
@@ -12,9 +12,10 @@
 - 场馆创建、列表、详情和修改；教练/学员通过明确场馆授权访问。
 - 服务器端机构/场馆归属检查、跨机构负向测试、专用测试库和独立初始迁移。
 - EdgeNode、Camera Device、EdgeCredential与持久幂等登记；提供管理员节点/设备管理、凭据签发/撤销和Edge heartbeat。
+- M2 Session/Asset/UploadIntent 与资源读取 grant；M3 Apply 分支增加单对象分片续传、整对象 SHA-256/受限 MP4 探测、ready 事务、播放/下载短期 URL 与隔离 S3 Adapter（PR #6 Draft，等待独立 Verify）。
 - PostgreSQL 17 专用可销毁实例上的迁移、schema、最小权限、角色矩阵与并发事务验证（见下方“验证”）。
 
-这是本地开发基线，尚未完成商业化平台。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、通用审计日志、Edge Runtime、训练会话/媒体上传与模型接入均待后续建设；当前没有复制旧演示数据或接入真实学员资料。
+这是本地开发基线，尚未完成商业化平台。PR #6 的 RustFS 仅为隔离 CI 测试 profile，不代表生产存储选型；生产媒体存储保持关闭。视频隐私与监护人同意、保留/备份/删除政策未冻结。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、通用审计日志、Edge Runtime、云边同步和 AI 分析/模型接入仍待后续建设；没有复制旧演示数据或接入真实学员资料。
 
 ## 启动
 

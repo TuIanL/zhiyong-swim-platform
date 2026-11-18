@@ -1,6 +1,6 @@
 # ADR 0003：云端采集与媒体领域模型及 API 契约方向
 
-- 状态：**v0.1-draft／未实现／无表无接口**
+- 原始状态：**v0.1-draft／仅记录设计方向**；2026-11-14 实施补记见第6节
 - 评审：D1–D10 方向已通过 Proposal 技术审阅，仅作为文档设计方向
 - 日期：2026-11-09
 - OpenSpec Change：define-cloud-capture-media-contracts
@@ -65,3 +65,11 @@
 - 当前实现仍只有原六表与 19 个既有 HTTP 操作；主规格 cloud-identity 不因纯文档 Change 修改。
 - 实现授权必须单独取得，随后建立行为规格、数据库/接口实施及权限/并发/上传测试；文档 Apply 不能被解释为业务 Apply。
 - 本 ADR 不等于独立 Verify，不归档 OpenSpec Change，不改变 Draft PR 状态，不授权合并。
+
+## 6. 实施状态补记（2026-11-14）
+
+本节只更新实施事实，不改写 D1–D10 的原始评审记录。Edge Registry、M2 Session/Asset/UploadIntent 与读取授权已实施；M3 `implement-cloud-media-upload-transfer` 当前 Apply 分支增加分片续传、对象完整性验证、ready 原子提交、短期访问 URL、隔离 S3 Adapter 与清理队列。当前工作仍在 Draft PR，Apply 后独立 Verify 与 Archive 尚未获授权，因此本段是交付进度记录，不是 Verify 或生产验收结论。
+
+M3 固定的开发/CI 值：新建意图上限2 GiB、16 MiB分片、每次最多100个分片签名、Part URL最长300秒、Access URL默认60秒且硬上限300秒；历史 M2 TTL 保持。首版仅接受通过固定 ffprobe 受限探测的 MP4 容器，不转码。User/Edge 原接受身份在最终 ready 前必须仍有效，失效时写入 `failed/upload_failed`。S3兼容 Adapter 与 RustFS 只用于隔离开发/CI；这不是生产选型。生产存储、用户/监护人同意、隐私、保留、备份和删除政策继续未决。
+
+没有新增 MediaBlob 表；相同 SHA-256 的独立采集仍保留独立 VideoAsset、来源、时间与权限。M3 不实现 HLS、转码、即时撤权代理、Edge Runtime、M4 云边同步、分析/报告、RLS或生产部署。

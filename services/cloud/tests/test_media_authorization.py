@@ -75,6 +75,7 @@ def test_site_access_alone_is_not_resource_access(client, seeded_account):
     assert client.get(
         org["base"] + f"/training-sessions/{session['id']}", headers=org["xh"]
     ).status_code == 404
+
     assert client.get(org["base"] + f"/video-assets/{asset['id']}", headers=org["xh"]).status_code == 404
     listed = client.get(org["base"] + "/training-sessions", headers=org["xh"]).json()["items"]
     assert listed == []
@@ -250,6 +251,87 @@ def test_site_access_and_membership_loss_override_unexpired_grants(client, seede
         org["base"] + f"/training-sessions/{session['id']}", headers=org["xh"]
     ).status_code == 404
 
+
+def test_session_and_asset_grant_audit_fields_survive_other_managers(client, app, seeded_account):
+    from sqlalchemy import select
+    from swimplatform.models import AssetReadGrant, SessionReadGrant
+
+    org = build(client, seeded_account)
+    admin, admin_headers = seeded_account("grant-admin")
+    added = client.post(
+        f"/api/v1/tenants/{org['tenant']['id']}/members", headers=org["oh"],
+        json={"user_id": admin["id"], "role": "admin"},
+    )
+    assert added.status_code == 201, added.text
+    session = make_session(client, org)
+    asset = make_asset(client, org, session["id"])
+    grantee = org["other"]["id"]
+    session_url = org["base"] + f"/training-sessions/{session['id']}/read-grants/{grantee}"
+    asset_url = org["base"] + f"/video-assets/{asset['id']}/read-grants/{grantee}"
+    clock = [datetime(2026, 11, 14, 10, 0, tzinfo=UTC)]
+    app.state.clock = lambda: clock[0]
+
+    session_first_deadline = (clock[0] + timedelta(hours=1)).isoformat()
+    asset_first_deadline = (clock[0] + timedelta(hours=2)).isoformat()
+    assert client.put(session_url, headers=org["oh"], json={"expires_at": session_first_deadline}).status_code == 204
+    assert client.put(asset_url, headers=org["oh"], json={"expires_at": asset_first_deadline}).status_code == 204
+    with app.state.sessions() as db:
+        session_grant = db.scalar(select(SessionReadGrant).where(
+            SessionReadGrant.session_id == session["id"], SessionReadGrant.grantee_user_id == grantee,
+        ))
+        asset_grant = db.scalar(select(AssetReadGrant).where(
+            AssetReadGrant.asset_id == asset["id"], AssetReadGrant.grantee_user_id == grantee,
+        ))
+        session_audit = (session_grant.granted_at, session_grant.granted_by_user_id)
+        asset_audit = (asset_grant.granted_at, asset_grant.granted_by_user_id)
+
+    clock[0] += timedelta(minutes=1)
+    assert client.put(session_url, headers=admin_headers, json={
+        "expires_at": (clock[0] + timedelta(hours=3)).isoformat(),
+    }).status_code == 204
+    assert client.put(asset_url, headers=admin_headers, json={
+        "expires_at": (clock[0] + timedelta(hours=4)).isoformat(),
+    }).status_code == 204
+    with app.state.sessions() as db:
+        session_grant = db.scalar(select(SessionReadGrant).where(
+            SessionReadGrant.session_id == session["id"], SessionReadGrant.grantee_user_id == grantee,
+        ))
+        asset_grant = db.scalar(select(AssetReadGrant).where(
+            AssetReadGrant.asset_id == asset["id"], AssetReadGrant.grantee_user_id == grantee,
+        ))
+        assert (session_grant.granted_at, session_grant.granted_by_user_id) == session_audit
+        assert (asset_grant.granted_at, asset_grant.granted_by_user_id) == asset_audit
+        assert session_grant.expires_at is not None and asset_grant.expires_at is not None
+
+    clock[0] += timedelta(minutes=1)
+    assert client.delete(session_url, headers=org["oh"]).status_code == 204
+    assert client.delete(asset_url, headers=org["oh"]).status_code == 204
+    with app.state.sessions() as db:
+        session_grant = db.scalar(select(SessionReadGrant).where(
+            SessionReadGrant.session_id == session["id"], SessionReadGrant.grantee_user_id == grantee,
+        ))
+        asset_grant = db.scalar(select(AssetReadGrant).where(
+            AssetReadGrant.asset_id == asset["id"], AssetReadGrant.grantee_user_id == grantee,
+        ))
+        session_revocation = (session_grant.revoked_at, session_grant.revoked_by_user_id)
+        asset_revocation = (asset_grant.revoked_at, asset_grant.revoked_by_user_id)
+
+    clock[0] += timedelta(minutes=1)
+    assert client.delete(session_url, headers=admin_headers).status_code == 204
+    assert client.delete(asset_url, headers=admin_headers).status_code == 204
+    with app.state.sessions() as db:
+        session_grant = db.scalar(select(SessionReadGrant).where(
+            SessionReadGrant.session_id == session["id"], SessionReadGrant.grantee_user_id == grantee,
+        ))
+        asset_grant = db.scalar(select(AssetReadGrant).where(
+            AssetReadGrant.asset_id == asset["id"], AssetReadGrant.grantee_user_id == grantee,
+        ))
+        assert (session_grant.granted_at, session_grant.granted_by_user_id) == session_audit
+        assert (asset_grant.granted_at, asset_grant.granted_by_user_id) == asset_audit
+        assert (session_grant.revoked_at, session_grant.revoked_by_user_id) == session_revocation
+        assert (asset_grant.revoked_at, asset_grant.revoked_by_user_id) == asset_revocation
+        assert session_grant.revoked_by_user_id == org["owner"]["id"]
+        assert asset_grant.revoked_by_user_id == org["owner"]["id"]
 
 def test_expired_grant_stops_applying(client, app, seeded_account):
     org = build(client, seeded_account)

@@ -31,11 +31,13 @@ from .models import (
     AssetReadGrant,
     Device,
     IdempotencyRecord,
+    MediaObject,
     SessionReadGrant,
     SiteMembership,
     TenantMembership,
     TrainingSession,
     UploadSession,
+    UploadPart,
     User,
     VideoAsset,
 )
@@ -57,6 +59,7 @@ P = "/tenants/{tenant_id}/sites/{site_id}"
 
 UPLOAD_TTL_HOURS = 24
 UPLOAD_TTL_MAX_DAYS = 7
+MAX_NEW_INTENT_BYTES = 2 * 1024**3
 
 STATUS_ENTRY = {
     "planned": {"recording", "cancelled"},
@@ -105,17 +108,36 @@ def asset_read(row: VideoAsset) -> AssetRead:
             float(row.device_clock_accuracy_ms) if row.device_clock_accuracy_ms is not None else None
         ),
         received_at=as_utc(row.received_at), media_type=row.media_type, size_bytes=row.size_bytes,
-        checksum_sha256=row.checksum_sha256, created_at=as_utc(row.created_at),
+        checksum_sha256=row.checksum_sha256,
+        verified_size_bytes=row.verified_size_bytes,
+        verified_media_type=row.verified_media_type,
+        verified_at=as_utc(row.verified_at),
+        created_at=as_utc(row.created_at),
         updated_at=as_utc(row.updated_at),
     )
 
 
-def upload_read(row: UploadSession) -> UploadSessionRead:
+def upload_read(row: UploadSession, db: Session | None = None) -> UploadSessionRead:
+    confirmed_parts = []
+    transfer_status = "not_prepared"
+    if db is not None:
+        obj = db.scalar(select(MediaObject).where(MediaObject.upload_session_id == row.id))
+        if obj:
+            transfer_status = obj.phase
+        confirmed_parts = db.scalars(select(UploadPart).where(
+            UploadPart.upload_session_id == row.id,
+            UploadPart.state.in_(("confirmed", "stale")),
+        ).order_by(UploadPart.part_number).limit(100)).all()
     return UploadSessionRead(
         id=row.id, asset_id=row.asset_id, status=row.status,
         initiator_user_id=row.initiator_user_id, initiator_edge_node_id=row.initiator_edge_node_id,
         expected_size_bytes=row.expected_size_bytes, expected_sha256=row.expected_sha256,
-        media_type=row.media_type, expires_at=as_utc(row.expires_at), confirmed_parts=[],
+        media_type=row.media_type, expires_at=as_utc(row.expires_at),
+        confirmed_parts=[{"part_number": part.part_number, "size_bytes": part.actual_size_bytes,
+                          "etag": part.etag, "confirmed_at": as_utc(part.confirmed_at),
+                          "state": part.state} for part in confirmed_parts],
+        transfer_status=transfer_status, part_size_bytes=row.part_size_bytes,
+        part_count=row.part_count,
         completed_at=as_utc(row.completed_at), failure_reason=row.failure_reason,
         created_at=as_utc(row.created_at), updated_at=as_utc(row.updated_at),
     )
@@ -185,6 +207,24 @@ def lock_upload(db: Session, tenant_id, site_id, upload_id: str) -> UploadSessio
         if result.rowcount != 1:
             return None
     return db.scalar(query)
+
+
+def lock_session_upload(db: Session, tenant_id, site_id, upload_id: str) -> tuple[TrainingSession, UploadSession] | None:
+    """Lock an upload in the global media order: Session → UploadSession.
+
+    The first lookup is deliberately non-locking and only discovers the parent key.
+    The caller must scope-check and authorize after both rows are locked. A concurrent
+    cancellation can change the upload while we wait for the Session lock, so the
+    UploadSession is re-read under lock before returning.
+    """
+    discovered = get_upload(db, tenant_id, site_id, UUID(upload_id))
+    session = lock_session(db, tenant_id, site_id, discovered.session_id)
+    if not session:
+        return None
+    upload = lock_upload(db, tenant_id, site_id, upload_id)
+    if not upload or upload.session_id != session.id:
+        return None
+    return session, upload
 
 
 # ---- 会话 ----------------------------------------------------------------
@@ -327,18 +367,8 @@ def patch_session(
             row.status = "completed"
             row.completed_at = now
         else:  # cancelled：同一事务内收口未完成上传与其 pending 资产
-            db.execute(update(UploadSession).where(
-                UploadSession.tenant_id == row.tenant_id,
-                UploadSession.site_id == row.site_id,
-                UploadSession.session_id == row.id,
-                UploadSession.status.in_(("uploading", "completing")),
-            ).values(status="failed", failure_reason="session_cancelled", updated_at=now))
-            db.execute(update(VideoAsset).where(
-                VideoAsset.tenant_id == row.tenant_id,
-                VideoAsset.site_id == row.site_id,
-                VideoAsset.session_id == row.id,
-                VideoAsset.status == "pending_upload",
-            ).values(status="failed", failure_reason="session_cancelled", updated_at=now))
+            from .media_transfer import cancel_session_uploads
+            cancel_session_uploads(db, row, now)
             row.status = "cancelled"
             row.cancelled_at = now
         changed = True
@@ -652,14 +682,19 @@ def _lock_intent_session(db: Session, tenant_id, site_id, session_id) -> Trainin
     return row
 
 
-def _assert_intent_allowed(db: Session, session: TrainingSession, user, member, now):
-    """在已加锁的会话上重新判定读取、管理与终态。"""
+def _assert_intent_authorized(db: Session, session: TrainingSession, user, member, now):
+    """在已加锁的会话上重查当前可见性和管理能力，不判断是否可新建。"""
     if not can_read_session(db, session, user, member, now):
         fail(404, "training_session_not_found", "训练会话不存在或无访问权限")
     if not can_manage_session(db, session, user, member):
         fail(403, "forbidden", "当前角色无该会话的上传权限")
+
+
+def _assert_new_intent_policy(session: TrainingSession, payload: UploadIntentCreate):
     if session.status == "cancelled":
         fail(409, "state_conflict", "已取消的会话不接受新的上传意图")
+    if payload.expected_size_bytes > MAX_NEW_INTENT_BYTES:
+        fail(422, "validation_error", "新建上传意图超过 2 GiB 传输上限")
 
 
 @router.post(P + "/training-sessions/{session_id}/upload-sessions", response_model=UploadIntentRead, status_code=201)
@@ -676,7 +711,7 @@ def create_upload_intent(
     if not can_manage_session(db, visible, user, member):
         fail(403, "forbidden", "当前角色无该会话的上传权限")
     session = _lock_intent_session(db, tenant_id, site_id, session_id)
-    _assert_intent_allowed(db, session, user, member, now)
+    _assert_intent_authorized(db, session, user, member, now)
     key_digest = idempotency_key_digest(idempotency_header)
     digest = request_digest(payload)
     existing = _find_intent_record(
@@ -685,6 +720,7 @@ def create_upload_intent(
     )
     if existing:
         return _replay_intent(db, existing, digest)
+    _assert_new_intent_policy(session, payload)
     return _create_intent(
         db, request=request, tenant_id=tenant_id, site_id=site_id, session=session, payload=payload,
         origin="manual", initiator_user_id=user.id, key_digest=key_digest, digest=digest,
@@ -692,17 +728,8 @@ def create_upload_intent(
 
 
 def _materialize_expiry(db: Session, upload: UploadSession, now: datetime) -> bool:
-    if upload.status != "uploading" or as_utc(upload.expires_at) > now:
-        return False
-    result = db.execute(update(UploadSession).where(
-        UploadSession.id == upload.id, UploadSession.status == "uploading",
-    ).values(status="expired", failure_reason="upload_expired", updated_at=now))
-    if result.rowcount == 1:
-        db.execute(update(VideoAsset).where(
-            VideoAsset.id == upload.asset_id, VideoAsset.status == "pending_upload",
-        ).values(status="failed", failure_reason="upload_expired", updated_at=now))
-    db.commit()
-    return result.rowcount == 1
+    from .media_transfer import expire_existing_upload
+    return expire_existing_upload(db, upload, now)
 
 
 def _user_can_touch_upload(db: Session, upload: UploadSession, session, user, member, now) -> bool:
@@ -717,15 +744,19 @@ def read_upload_session(
 ):
     _, member = _scope(db, tenant_id, site_id, user)
     now = server_now(request)
-    upload = lock_upload(db, tenant_id, site_id, str(upload_session_id))
-    if not upload:
+    candidate = get_upload(db, tenant_id, site_id, upload_session_id)
+    candidate_session = get_session(db, tenant_id, site_id, UUID(candidate.session_id))
+    if not _user_can_touch_upload(db, candidate, candidate_session, user, member, now):
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
-    session = get_session(db, tenant_id, site_id, UUID(upload.session_id))
+    locked = lock_session_upload(db, tenant_id, site_id, str(upload_session_id))
+    if not locked:
+        fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
+    session, upload = locked
     if not _user_can_touch_upload(db, upload, session, user, member, now):
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
     _materialize_expiry(db, upload, now)
     db.refresh(upload)
-    return upload_read(upload)
+    return upload_read(upload, db)
 
 
 @router.post(P + "/upload-sessions/{upload_session_id}/abort", status_code=204)
@@ -734,25 +765,23 @@ def abort_upload_session(
 ):
     _, member = _scope(db, tenant_id, site_id, user)
     now = server_now(request)
-    upload = lock_upload(db, tenant_id, site_id, str(upload_session_id))
-    if not upload:
+    candidate = get_upload(db, tenant_id, site_id, upload_session_id)
+    candidate_session = get_session(db, tenant_id, site_id, UUID(candidate.session_id))
+    if not _user_can_touch_upload(db, candidate, candidate_session, user, member, now):
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
-    session = get_session(db, tenant_id, site_id, UUID(upload.session_id))
+    locked = lock_session_upload(db, tenant_id, site_id, str(upload_session_id))
+    if not locked:
+        fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
+    session, upload = locked
     if not _user_can_touch_upload(db, upload, session, user, member, now):
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
     if _materialize_expiry(db, upload, now):
         return Response(status_code=204)
-    if upload.status != "uploading":
+    if upload.status not in {"uploading", "completing"}:
         db.rollback()
         return Response(status_code=204)
-    result = db.execute(update(UploadSession).where(
-        UploadSession.id == upload.id, UploadSession.status == "uploading",
-    ).values(status="aborted", failure_reason="upload_aborted", updated_at=now))
-    if result.rowcount == 1:
-        db.execute(update(VideoAsset).where(
-            VideoAsset.id == upload.asset_id, VideoAsset.status == "pending_upload",
-        ).values(status="failed", failure_reason="upload_aborted", updated_at=now))
-    db.commit()
+    from .media_transfer import abort_existing_upload
+    abort_existing_upload(db, upload, now)
     return Response(status_code=204)
 
 
@@ -767,10 +796,8 @@ def create_edge_upload_intent(
 ):
     now = server_now(request)
     node, _ = get_edge_identity(db, authorization, now)
-    # 与用户路径一致的父 Session 并发协议：同范围行锁 + 锁后重查终态。
+    # 与用户路径一致的父 Session 并发协议：同范围行锁 + 锁后重查。
     session = _lock_intent_session(db, node.tenant_id, node.site_id, session_id)
-    if session.status == "cancelled":
-        fail(409, "state_conflict", "已取消的会话不接受新的上传意图")
     device = db.get(Device, str(payload.device_id))
     if (
         not device
@@ -779,8 +806,6 @@ def create_edge_upload_intent(
         or device.edge_node_id != node.id
     ):
         fail(404, "device_not_found", "设备不存在或不属于该节点")
-    if device.status != "active":
-        fail(409, "state_conflict", "设备已停用，不能创建上传意图")
     key_digest = idempotency_key_digest(idempotency_header)
     digest = request_digest(payload)
     existing = _find_intent_record(
@@ -789,6 +814,12 @@ def create_edge_upload_intent(
     )
     if existing:
         return _replay_intent(db, existing, digest)
+    if session.status == "cancelled":
+        fail(409, "state_conflict", "已取消的会话不接受新的上传意图")
+    if payload.expected_size_bytes > MAX_NEW_INTENT_BYTES:
+        fail(422, "validation_error", "新建上传意图超过 2 GiB 传输上限")
+    if device.status != "active":
+        fail(409, "state_conflict", "设备已停用，不能创建上传意图")
     return _create_intent(
         db, request=request, tenant_id=node.tenant_id, site_id=node.site_id, session=session,
         payload=payload, origin="edge", initiator_edge_node_id=node.id,
@@ -797,8 +828,14 @@ def create_edge_upload_intent(
 
 
 def _edge_upload(db: Session, node, upload_id: str) -> UploadSession:
-    upload = lock_upload(db, node.tenant_id, node.site_id, upload_id)
-    if not upload or upload.initiator_edge_node_id != node.id:
+    candidate = get_upload(db, node.tenant_id, node.site_id, UUID(upload_id))
+    if candidate.initiator_edge_node_id != node.id:
+        fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
+    locked = lock_session_upload(db, node.tenant_id, node.site_id, upload_id)
+    if not locked:
+        fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
+    _, upload = locked
+    if upload.initiator_edge_node_id != node.id:
         fail(404, "upload_session_not_found", "上传会话不存在或无访问权限")
     return upload
 
@@ -812,7 +849,7 @@ def read_edge_upload_session(
     node, _ = get_edge_identity(db, authorization, now)
     upload = _edge_upload(db, node, str(upload_session_id))
     _materialize_expiry(db, upload, now)
-    return upload_read(_edge_upload(db, node, str(upload_session_id)))
+    return upload_read(_edge_upload(db, node, str(upload_session_id)), db)
 
 
 @router.post("/edge/upload-sessions/{upload_session_id}/abort", status_code=204)
@@ -825,15 +862,9 @@ def abort_edge_upload_session(
     upload = _edge_upload(db, node, str(upload_session_id))
     if _materialize_expiry(db, upload, now):
         return Response(status_code=204)
-    if upload.status != "uploading":
+    if upload.status not in {"uploading", "completing"}:
         db.rollback()
         return Response(status_code=204)
-    result = db.execute(update(UploadSession).where(
-        UploadSession.id == upload.id, UploadSession.status == "uploading",
-    ).values(status="aborted", failure_reason="upload_aborted", updated_at=now))
-    if result.rowcount == 1:
-        db.execute(update(VideoAsset).where(
-            VideoAsset.id == upload.asset_id, VideoAsset.status == "pending_upload",
-        ).values(status="failed", failure_reason="upload_aborted", updated_at=now))
-    db.commit()
+    from .media_transfer import abort_existing_upload
+    abort_existing_upload(db, upload, now)
     return Response(status_code=204)
