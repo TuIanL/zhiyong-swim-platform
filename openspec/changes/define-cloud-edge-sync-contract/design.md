@@ -72,11 +72,12 @@
 
 <a name="post-verify-remediation"></a>
 
-[首轮 Verify](verification.md) 的核验对象是最终 Apply Head `4588e69`。本轮 W1、W2、S1 处于 `Remediated - Awaiting Re-Verify`。
+[首轮 Verify](verification.md) 的核验对象是最终 Apply Head `4588e69`。[第二轮 Verify](../../../docs/verification/cloud-edge-sync-contract-reverify.md) 固定核验 `93548e5`，记录 W1/W2 关闭、S1 满足和新增 W3。本次仅按负责人授权修订 W3。
 
 | 项目 | 文档验收及归属 |
 | --- | --- |
 | W1 | [W1.1–W1.7](../../../docs/contracts/cloud-edge-sync-v1.md#w1-vectors) 将同 Assignment 已消费的冲突接单用于后续归因。M4.2 保留真实本地终态和原信封，M4.3 写审计/收据并维护取消终态，M4.4 验收重连补投。 |
 | W2 | [M7](../../../docs/contracts/cloud-edge-sync-v1.md#m7-multipart-resume) 归 M4.4。沿原批准和意图，用现有 M3 恢复两个实际分片的独立联调。 |
 | S1 | [S1-R1–S1-R4](../../../docs/contracts/cloud-edge-sync-v1.md#s1-vectors) 由 M4.2 校验本地确认，M4.3 校验当前身份与最小收据，M4.4 联调。 |
+| W3 | [W3.1](../../../docs/contracts/cloud-edge-sync-v1.md#w3-vectors) 指定取消与同归属设备停用并存时收据为 `task_cancelled`，冲突审计保留两项原因。M4.3 验收序号仅消费一次、无正常投影和原收据重放，M4.4 复测组合条件。 |
 | S2 | 活动 Change 链接按活动位置维护，归档移位后的路径核对留给 Archive。 |
