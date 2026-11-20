@@ -22,8 +22,8 @@
 
 <a name="acceptance-matrix"></a>
 
-- [R1–R8 与 19 个原始 Scenario 及运行证据归属](../../../docs/contracts/cloud-edge-sync-v1.md#acceptance-matrix)
-- [19 项 T/A/C/L 定向验收](../../../docs/contracts/cloud-edge-sync-v1.md#targeted-matrix)
-- [6 项 Q5 B 人工批准媒体联调](../../../docs/contracts/cloud-edge-sync-v1.md#media-matrix)
+- [R1–R8 与 19 个原始 Scenario 及运行证据归属](../../../../docs/contracts/cloud-edge-sync-v1.md#acceptance-matrix)
+- [19 项 T/A/C/L 定向验收](../../../../docs/contracts/cloud-edge-sync-v1.md#targeted-matrix)
+- [6 项 Q5 B 人工批准媒体联调](../../../../docs/contracts/cloud-edge-sync-v1.md#media-matrix)
 
-Task 2.2 的 ACK、事务与对账语义见 [D3](../../../docs/contracts/cloud-edge-sync-v1.md#delivery)。负责人已确认 [Q6 P01–P10 原建议值](../../../docs/architecture/cloud-edge-sync-v1.md#timing-register)，批准范围仅为隔离开发与测试。原任务的场景核对见 [Task 2.2 走读证据](../../../docs/verification/cloud-edge-sync-contract-apply.md#task-2-2)。
+Task 2.2 的 ACK、事务与对账语义见 [D3](../../../../docs/contracts/cloud-edge-sync-v1.md#delivery)。负责人已确认 [Q6 P01–P10 原建议值](../../../../docs/architecture/cloud-edge-sync-v1.md#timing-register)，批准范围仅为隔离开发与测试。原任务的场景核对见 [Task 2.2 走读证据](../../../../docs/verification/cloud-edge-sync-contract-apply.md#task-2-2)。

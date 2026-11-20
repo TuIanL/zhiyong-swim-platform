@@ -11,7 +11,7 @@
 | 第三轮核验 Head | `e350c753184cc36828c6f2659967c9f462e55a0c`，本地、远端 PR 和 CI Run 绑定一致 |
 | PR #7 | `docs/m4-cloud-edge-sync-contract → main`，Open / Draft / 未合并。[Draft PR #7](https://github.com/TuIanL/zhiyong-swim-platform/pull/7) |
 | main | `94fed6b03d50ccca52f6ec959bcde1636148c65c` |
-| 首轮与第二轮 | 分别固定于 `4588e69` 和 `93548e5`，两份报告与其各自首次入库的 Git blob 逐字节一致。[首轮 Verify](../../openspec/changes/define-cloud-edge-sync-contract/verification.md) · [第二轮 Verify](cloud-edge-sync-contract-reverify.md) |
+| 首轮与第二轮 | 分别固定于 `4588e69` 和 `93548e5`，两份报告与其各自首次入库的 Git blob 逐字节一致。[首轮 Verify](../../openspec/changes/archive/2026-11-20-define-cloud-edge-sync-contract/verification.md) · [第二轮 Verify](cloud-edge-sync-contract-reverify.md) |
 | W3 修订 | `ee54dc7` 固定重叠条件下的收据优先级，`e350c75` 固定审计数组并补追溯和报告。[W3 Remediation](cloud-edge-sync-contract-w3-remediation.md) |
 
 ## OpenSpec 核验

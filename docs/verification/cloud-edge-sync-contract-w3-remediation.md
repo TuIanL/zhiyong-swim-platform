@@ -7,7 +7,7 @@
 | 用途 | 提交或证据 |
 | --- | --- |
 | main 基线 | `94fed6b03d50ccca52f6ec959bcde1636148c65c` |
-| 首轮 Verify 核验 Head | `4588e6905ad876fb8bcc1edb5a3280f21703200a`。[首轮报告](../../openspec/changes/define-cloud-edge-sync-contract/verification.md) |
+| 首轮 Verify 核验 Head | `4588e6905ad876fb8bcc1edb5a3280f21703200a`。[首轮报告](../../openspec/changes/archive/2026-11-20-define-cloud-edge-sync-contract/verification.md) |
 | 第二轮 Verify 核验 Head | `93548e58662f3a94de82b186738d6231928a2c4c`。W3 记录 D4 与 Q7 的组合条件未规定收据 code 优先级。[第二轮报告](cloud-edge-sync-contract-reverify.md#第二轮仍待处理) |
 | W3 初次修订及本次补齐的基线 | `ee54dc758869b1f9f64041431cca85f935d83aa0`。已增加 W3.1 并明确优先级及两项审计原因。[基线 CI](https://github.com/TuIanL/zhiyong-swim-platform/actions/runs/44660777749) |
 | 交付入口 | [Draft PR #7](https://github.com/TuIanL/zhiyong-swim-platform/pull/7) · [当前 Head 的 CI](https://github.com/TuIanL/zhiyong-swim-platform/pull/7/checks) |

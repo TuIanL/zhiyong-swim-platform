@@ -8,7 +8,7 @@ M3 合并后，已登记的节点可以使用受限身份传输媒体，云端�
 
 ## What Changes
 
-- 以纯文档契约记录方向、信封、角色与范围、任务生命周期、ACK、冲突、重试、重连和安全停止。发布 [正式 v1 API 契约与样例](../../../docs/contracts/cloud-edge-sync-v1.md)，保留原 R1–R8、19 个 Scenario 和 T/A/C/L 追溯。另加 M4.4 的 Q5 B 媒体验收。
+- 以纯文档契约记录方向、信封、角色与范围、任务生命周期、ACK、冲突、重试、重连和安全停止。发布 [正式 v1 API 契约与样例](../../../../docs/contracts/cloud-edge-sync-v1.md)，保留原 R1–R8、19 个 Scenario 和 T/A/C/L 追溯。另加 M4.4 的 Q5 B 媒体验收。
 - 继承负责人已批准的本地优先与有效身份边界。已业务接单的任务可在一般断网或自然过期时继续本地执行，原片默认留场馆。云端凭据受服务端截止及撤销约束，媒体传输继续走 M3。
 - Q5=B 为 M4.4 新增必验上传分支。批准绑定 Session、具体资产、目的和当前授权，复用 M3。原片默认留场馆，自动上传和自动删除不属于此链路。
 - 已批准一个 Session 在整个 v1 生命周期最多一个任务，每个任务固定一个节点、一次分配，终态也占用名额。创建与指派原子提交。对应 Q1=A。
@@ -18,7 +18,7 @@ M3 合并后，已登记的节点可以使用受限身份传输媒体，云端�
 
 ### New Capabilities
 
-无。沿用 [采集与媒体领域契约归档先例](../archive/2026-11-10-define-cloud-capture-media-contracts/proposal.md)，本 Change 声明 `skip_specs: true`。Change 根目录保留候选文档的追溯入口。正式工程文档位于 `docs/`，未来归档只搬迁 Change 文档。
+无。沿用 [采集与媒体领域契约归档先例](../2026-11-10-define-cloud-capture-media-contracts/proposal.md)，本 Change 声明 `skip_specs: true`。Change 根目录保留候选文档的追溯入口。正式工程文档位于 `docs/`，未来归档只搬迁 Change 文档。
 
 ### Modified Capabilities
 
@@ -36,4 +36,4 @@ M3 合并后，已登记的节点可以使用受限身份传输媒体，云端�
 
 业务签认对应 [二轮 Propose Head](https://github.com/TuIanL/zhiyong-swim-platform/commit/a26d0065ff0a6f3c9925292176d4a4e33c4d1d6b)。批准序列为 Q1=A、Q2=A、Q3=A、Q4=A、Q5=B、Q6=A、Q7=A。
 
-正式交付入口为 [架构与交接](../../../docs/architecture/cloud-edge-sync-v1.md)、[API 与验收矩阵](../../../docs/contracts/cloud-edge-sync-v1.md)、[ADR 0004](../../../docs/decisions/0004-cloud-edge-sync-v1.md) 和 [Apply 证据](../../../docs/verification/cloud-edge-sync-contract-apply.md)。
+正式交付入口为 [架构与交接](../../../../docs/architecture/cloud-edge-sync-v1.md)、[API 与验收矩阵](../../../../docs/contracts/cloud-edge-sync-v1.md)、[ADR 0004](../../../../docs/decisions/0004-cloud-edge-sync-v1.md) 和 [Apply 证据](../../../../docs/verification/cloud-edge-sync-contract-apply.md)。
