@@ -1,6 +1,6 @@
 # 智泳云枢 · 新版平台
 
-独立重建的游泳智能视频分析平台。当前 main 已含账号、机构、场馆与 Cloud Edge Registry；Draft PR #6 的 M3 Apply 正在补齐 Cloud Media Transfer，尚待独立 Verify。
+独立重建的游泳智能视频分析平台。仓库采用 Monorepo，各模块独立管理依赖、测试、构建和部署。main 已合入 Cloud Media Transfer（[PR #6](https://github.com/TuIanL/zhiyong-swim-platform/pull/6)）和 M4.1 云边同步契约文档（[PR #7](https://github.com/TuIanL/zhiyong-swim-platform/pull/7)）。
 
 仓库：[TuIanL/zhiyong-swim-platform](https://github.com/TuIanL/zhiyong-swim-platform)。产品需求与任务：[Notion 项目](https://app.notion.com/p/410f602574aa816ea4a6f2b06985d412)。
 
@@ -12,12 +12,12 @@
 - 场馆创建、列表、详情和修改；教练/学员通过明确场馆授权访问。
 - 服务器端机构/场馆归属检查、跨机构负向测试、专用测试库和独立初始迁移。
 - EdgeNode、Camera Device、EdgeCredential与持久幂等登记；提供管理员节点/设备管理、凭据签发/撤销和Edge heartbeat。
-- M2 Session/Asset/UploadIntent 与资源读取 grant；M3 Apply 分支增加单对象分片续传、整对象 SHA-256/受限 MP4 探测、ready 事务、播放/下载短期 URL 与隔离 S3 Adapter（PR #6 Draft，等待独立 Verify）。
+- M2 Session/Asset/UploadIntent 与资源读取 grant；M3 支持单对象分片续传、整对象 SHA-256/受限 MP4 探测、ready 事务、播放/下载短期 URL 与隔离 S3 Adapter。
 - PostgreSQL 17 专用可销毁实例上的迁移、schema、最小权限、角色矩阵与并发事务验证（见下方“验证”）。
 
-这是本地开发基线，尚未完成商业化平台。PR #6 的 RustFS 仅为隔离 CI 测试 profile，不代表生产存储选型；生产媒体存储保持关闭。视频隐私与监护人同意、保留/备份/删除政策未冻结。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、通用审计日志、Edge Runtime、云边同步和 AI 分析/模型接入仍待后续建设；没有复制旧演示数据或接入真实学员资料。
+这是本地开发基线，尚未完成商业化平台。RustFS 用于隔离 CI 测试。生产存储选型待评审，生产媒体存储保持关闭。视频隐私与监护人同意、保留/备份/删除政策未冻结。网页应用、邮件验证/找回密码、所有权转移、平台管理员、RLS 实测、外部身份系统、通用审计日志、Edge Runtime、云边同步和 AI 分析/模型接入仍待后续建设；没有复制旧演示数据或接入真实学员资料。
 
-## 启动
+## Cloud 开发与启动
 
 使用 Python3.13，创建新版自己的环境：
 
@@ -63,21 +63,48 @@ docker ps -a --filter label=com.zhiyong.swim-pg-test.run --format '{{.Names}}'
 docker rm --force swim-pg-test-<run id>
 ```
 
-每项集成测试在隔离临时库内执行新版迁移，不连接旧库。当前revision `20261110_0002`保留 `20261106_0001` 的六表基础，并递增增加四张Registry表；API快照为21 paths / 31 operations，内含既有19项基础操作和新增12项Registry操作。SQLite覆盖原身份/机构/场馆回归及Registry模型、API、凭据和心跳；专用PostgreSQL套件扩展迁移往返、十表最小权限、拒绝未批准表及独立连接并发证据。当前Change的实际测试结果见[Cloud Edge Registry Apply报告](docs/verification/cloud-edge-device-foundation-apply.md)，六表基线结果仍见[历史PostgreSQL报告](docs/verification/cloud-foundation-postgresql.md)；RLS 与生产部署仍未验证。
+每项集成测试在新版的隔离临时库内执行迁移。
 
-## 结构
+历史 Cloud Edge Registry 验证使用迁移 `20261110_0002`，在 `20261106_0001` 的六表基础上新增四张 Registry 表。该切片的 API 快照包含 21 paths / 31 operations，其中 19 项基础操作、12 项 Registry 操作。SQLite覆盖原身份/机构/场馆回归及Registry模型、API、凭据和心跳；专用PostgreSQL套件扩展迁移往返、十表最小权限、拒绝未批准表及独立连接并发证据。该切片的实际测试结果见[Cloud Edge Registry Apply报告](docs/verification/cloud-edge-device-foundation-apply.md)，六表基线结果仍见[历史PostgreSQL报告](docs/verification/cloud-foundation-postgresql.md)；RLS 与生产部署仍未验证。
+
+媒体存储验收使用专用 RustFS 容器与合成夹具。CI 固定 ffprobe 6.1.1。准备对应环境后在仓库根目录执行：
+
+    python scripts/test-rustfs.py
+
+## 结构与开发入口
 
 ```text
-services/cloud/       新版云端 API、迁移、测试
-docs/contracts/       API 与角色权限契约
-docs/decisions/       决策及实现边界
-docs/reference/       历史资产的选择性借鉴记录
-openspec/             新版规格，不直接继承旧规格的完成状态
-configs/              非敏感配置与模型选型记录
-var/                  本地开发数据（不提交）
+apps/venue-console/       场馆 LAN 管理前端
+apps/personal-workbench/  独立个人视频分析工作台
+services/cloud/          云端 API、迁移和测试
+services/edge-runtime/    场馆本地计算服务
+deploy/{cloud,venue,personal,dev}/
+docs/{architecture,contracts,decisions,verification,engineering,reference}/
+openspec/                 主规格、Change 与历史归档
+configs/                  非敏感配置
+scripts/                  现有 Cloud 开发及验证入口
+var/                      本地开发数据（不提交）
 ```
 
-已创建新版专属 `.venv`，独立安装依赖并构建/安装项目 wheel，没有复用旧 `.conda` 或 `.env`、也没有向全局安装依赖。依赖锁记录本轮验证组合；依赖漏洞审计与其他操作系统仍需验证；PostgreSQL 证据按当前Apply提交的CI报告记录，RLS、生产部署与生产数据操作仍未验证。开发脚本显式使用新版源码与环境；源码改动后无需重新安装 wheel。
+| 模块 | 职责 | 开发入口 |
+| --- | --- | --- |
+| Cloud | 账号、Tenant、Site、设备登记、媒体与其他云端服务 | 仓库根目录的 [Cloud 开发与启动](#cloud-开发与启动) |
+| Edge Runtime | 设备接入、视频采集、本地媒体、任务及现场运维 | [services/edge-runtime](services/edge-runtime/README.md) |
+| Venue Console | 场馆 LAN 内的 Edge 管理 | [apps/venue-console](apps/venue-console/README.md) |
+| Personal Workbench | 独立个人上传、分析提交、指标、报告和历史 | [apps/personal-workbench](apps/personal-workbench/README.md) |
+
+Cloud 已有可运行入口。其余三个模块目前提供目录说明，运行入口随各自首个可运行切片交付。
+
+| 部署 Profile | 范围 |
+| --- | --- |
+| [cloud](deploy/cloud/README.md) | 云端服务 |
+| [venue](deploy/venue/README.md) | Edge Runtime 和 Venue Console |
+| [personal](deploy/personal/README.md) | 独立 Personal Workbench |
+| [dev](deploy/dev/README.md) | 本地组合开发、Mock 和集成测试 |
+
+模块所有权、契约评审和 CI 演进见[工程组织说明](docs/engineering/monorepo.md)。
+
+已创建新版专属 `.venv`，独立安装依赖并构建/安装项目 wheel，没有复用旧 `.conda` 或 `.env`、也没有向全局安装依赖。依赖锁记录本轮验证组合；依赖漏洞审计与其他操作系统仍需验证；PostgreSQL 历史证据见对应交付的 CI 报告，RLS、生产部署与生产数据操作仍未验证。开发脚本显式使用新版源码与环境；源码改动后无需重新安装 wheel。
 
 本机曾出现隐藏 `.pth` 被 Python3.13 忽略的可编辑安装问题，已通过正常 wheel 安装及显式源码开发入口验证；打包回归用例防止 pytest 的源码路径掩盖安装问题。
 
