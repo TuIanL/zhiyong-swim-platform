@@ -9,8 +9,12 @@
 
 ## 首轮 Verify 后的契约追溯
 
-[首轮 Verify](verification.md) 固定核验 `4588e6905ad876fb8bcc1edb5a3280f21703200a`。本轮纯文档修订补充以下向量，供第二轮独立 Verify；原编号保留。
+[首轮 Verify](verification.md) 固定核验 `4588e6905ad876fb8bcc1edb5a3280f21703200a`。首轮后的纯文档修订补充以下向量，原编号保留。
 
 - [W1.1–W1.7 取消后的离线补投](../../../docs/contracts/cloud-edge-sync-v1.md#w1-vectors)
 - [M7 人工批准后的多分片续传](../../../docs/contracts/cloud-edge-sync-v1.md#m7-multipart-resume)
 - [S1-R1–S1-R4 上行收据作用域匹配](../../../docs/contracts/cloud-edge-sync-v1.md#s1-vectors)
+
+## 第二轮 Verify 后的 W3.1 追溯
+
+[第二轮 Verify](../../../docs/verification/cloud-edge-sync-contract-reverify.md#第二轮仍待处理) 的 W3 涉及 Q2/Q7、R3/R6 及既有 W1.3。新增 [W3.1](../../../docs/contracts/cloud-edge-sync-v1.md#w3-vectors)，由 M4.3 验收一次消费、固定顺序的双原因审计、无正常投影及稳定收据，M4.4 复测离线补投的组合条件。[W3 Remediation](../../../docs/verification/cloud-edge-sync-contract-w3-remediation.md)

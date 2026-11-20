@@ -29,7 +29,7 @@
 
 - Cloud 按当前有效 Node 身份核对 Tenant、Site、Node、Session、Task 与 Assignment，再校验 Event ID、序号与因果。对 Task 已合法取消的新事件，同一 Assignment 的合法连续上行事实在同一事务写入 Inbox、原序号、收据及最小审计。迟到 `training_task.accepted`、后续 `capture.recorded` 和合法 `training_task.finished` 均返回 HTTP 200、`disposition=conflict_recorded`、`code=task_cancelled`。收据保留原 `event_id`、`assignment_id`、`sequence`。Task 正式终态保持 `cancelled`，不重建 Task 或 Assignment，不创建正常采集投影、上传意图或 `VideoAsset.ready`。
 - 因果来自同一 Assignment 已消费的 Inbox 接单事实。处置为 `applied` 或 `conflict_recorded` 的合法接单都可作为后续 `capture.recorded`、`training_task.finished` 的接单前置。该证据与正式 Task 投影分开保存，其他 Assignment 的接单不能借用。Cloud 保存节点作用域、身份已核验的分配关联、事件 ID/类型/序号、原命令版本、信封指纹、服务端入库时间和处置。采集另留来源设备及 capture ID，终态另留实际 outcome。审计保留最小事实，遵守事件白名单和原片本地边界。
-- 对首次消费的合法连续 `capture.recorded`，若 Task 已合法取消且同归属的来源 Device 也已停用，收据的单一 `code` 固定为 `task_cancelled`。在同一消费事务内，冲突审计保留 `task_cancelled` 和 `device_disabled` 两项原因，且仅消费一次序号、无正常采集投影。仅设备停用冲突仍按 Q7 返回 `device_disabled`。同 ID、同内容且当前身份和归属有效的重放返回原持久化收据，即使设备状态随后改变也不重算处置或重写审计。见 [W3.1](#w3-vectors)。
+- 对首次消费的合法连续 `capture.recorded`，若 Task 已合法取消且同归属的来源 Device 也已停用，收据的单一 `code` 固定为 `task_cancelled`。同一消费事务的内部冲突审计使用有序字符串数组 `conflict_reasons`，值恰为 `["task_cancelled","device_disabled"]`。第一项为对外收据原因，第二项为设备停用原因，元素值和顺序固定，不重复。该字段只定义内部审计的逻辑表示，API 收据沿用原字段，物理存储由 M4.3 定义。该事务仅消费一次序号，无正常采集投影。仅设备停用冲突仍按 Q7 返回 `device_disabled`。同 ID、同内容且当前身份和归属有效的重放返回原持久化收据，即使设备状态随后改变也不重算处置或重写审计。见 [W3.1](#w3-vectors)。
 - `completed` 与 `failed` 记录实际完成或失败的 Edge 终态。Edge 应用取消和写执行终态使用本地持久记录定序。终态已产生时，即使随后收到或应用取消，仍补投原终态、原序号和原命令版本。Cloud 已取消或 Edge 尚未收到命令，以及仅收到 HTTP 结果或发出 Command ACK，都不能产生 `stopped_by_cancel`。
 - `stopped_by_cancel` 只由 Edge 已持久应用同一 Assignment 的取消命令、且执行器因该命令实际安全停止后产生。Edge 持久关联取消命令版本与实际停止事实；沿现有信封上报对应的 `task_version`（v1 为 2）及 `outcome`。Cloud 核对该分配的已提交取消命令、版本及先前合法接单，持久审计该版本、取消原因/命令关联及停止 outcome，再以同一 `task_cancelled` 冲突收据消费序号。Command ACK 的到达不是上行验证前置，因其可丢失。一般本地安全挂起按 [D5](../architecture/cloud-edge-sync-v1.md#offline-safety) 处理。
 - 已认证且归属正确的同 ID、同内容重放返回原逻辑收据，不再消费或写审计。同 ID 异内容或同序号换 ID 为 `409 event_conflict`，缺序为 `409 sequence_gap`。连续序号引用未来版本、缺少同分配已消费接单、报告第二个执行终态，或 `stopped_by_cancel` 缺少相符取消命令及版本时，返回 `422 validation_error`。无效身份和越域分别返回 401/404。这些拒绝均不消费序号或生成成功收据。完整轨迹见 [W1.1–W1.7](#w1-vectors)。
@@ -548,7 +548,7 @@ M4.2 验收执行事实与 Outbox 生成，M4.3 验收 Inbox、收据、因果�
 
 | 编号 | 初始事实和操作 | 必须观察的结果 |
 | --- | --- | --- |
-| W3.1 | Task 已合法取消。Assignment A 已消费自身 `accepted@1`，当前期望序号 2。用有效 Node 身份补投符合因果的 `capture.recorded@2/v1`，来源 Device 同归属且已停用。保持身份和归属有效，以同 Event ID、同信封重放，另在设备状态改变后再重放一次。 | 首投返回 HTTP 200、`disposition=conflict_recorded`、`code=task_cancelled`，收据含原事件、分配和序号。单事务仅新增一条 Inbox 及对应收据和冲突审计，审计保留 `task_cancelled`、`device_disabled` 两项原因。序号从期望 2 推进到 3，Task 保持 `cancelled`，无正常采集投影、上传意图或 `VideoAsset.ready`。两次重放均返回原逻辑收据，期望序号仍为 3，Inbox、审计及正常业务投影均无新增或重写。 |
+| W3.1 | Task 已合法取消。Assignment A 已消费自身 `accepted@1`，当前期望序号 2。用有效 Node 身份补投符合因果的 `capture.recorded@2/v1`，来源 Device 同归属且已停用。保持身份和归属有效，以同 Event ID、同信封重放，另在设备状态改变后再重放一次。 | 首投返回 HTTP 200、`disposition=conflict_recorded`、`code=task_cancelled`，收据含原事件、分配和序号。单事务仅新增一条 Inbox 及对应收据和冲突审计，内部 `conflict_reasons` 严格等于有序数组 `["task_cancelled","device_disabled"]`。序号从期望 2 推进到 3，Task 保持 `cancelled`，无正常采集投影、上传意图或 `VideoAsset.ready`。两次重放均返回原逻辑收据，期望序号仍为 3，原审计数组、Inbox 及正常业务投影均无新增或重写。 |
 
 M4.3 验收单事务消费、双原因审计及收据稳定性。M4.4 在离线补投链路中复测组合条件。
 
