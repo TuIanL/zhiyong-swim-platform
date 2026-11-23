@@ -20,12 +20,12 @@
 
 - [ ] 3.1 对 CloudAdapter 返回的分页结构/through 做页级预检，再对每条原始命令按 M4.1 验证后保存规范信封/fingerprint；命令 Inbox、命令效果与 cursor 同事务提交，验证提交前崩溃不留半账本（T-04）。
 - [ ] 3.2 实现命令重复接收幂等、同 ID/序号异内容冲突留证，以及提交后 ACK 响应丢失时从持久 cursor 重发相同水位；以子进程在持久接收后、ACK 前退出并恢复验证（T-05），并注入丢失 ACK 验证不重复应用命令效果（T-10）。
-- [ ] 3.3 实现 `round_through` 固定上界持久化，未追平不得换新水位；对乱序分页、重复页、缺口及重启恢复运行可控序列测试，并核对 ACK target 不超过本地连续 applied cursor。
+- [ ] 3.3 实现 `round_through` 固定上界持久化，未追平不得换新水位；逐页验证 `next_after` 与本页连续命令尾部及 round 上界一致，空页不推进；对乱序分页、重复页、缺口及重启恢复测试，并核对 ACK target 不超过本地连续 applied cursor（T-44）。
 - [ ] 3.4 按 8192 UTF-8 字节/命令、50 命令/页、schema_version=1、重复键/字段闭集、UUID/UTC/安全整数/方向/载荷规则完成严格 validator；逐项运行 T-26–T-32，验证非法 N 阻止后缀和 ACK 越位，并在 Spec/M4.1 契约样例间做字段对照。
 
 ## 4. 本地 Task、Assignment 与执行门槛
 
-- [ ] 4.1 持久化 Cloud 控制快照与 Edge LocalTask/Assignment phase、恢复状态、run ID 和确定性 checkpoint；分开表示 Inbox applied、ACK 投递、业务接单和实际开工，以 T-06 验证接单/outbox 同事务且 ACK 不开工。
+- [ ] 4.1 持久化 Cloud `cloud_task_status`、独立 `cloud_task_version`/`cloud_projection_revision` 与 Edge LocalTask/Assignment phase、恢复状态、run ID/checkpoint；Reconcile 只单调应用新投影，快照不改写 Edge 执行事实/Outbox（T-45）。分开表示 Inbox applied、ACK 投递、业务接单和实际开工，以 T-06 验证接单/outbox 同事务且 ACK 不开工。
 - [ ] 4.2 实现固定水位追平、未取消且无 active safety hold 的业务接单门槛，以及独立的执行门槛；验证未追平/已取消/已挂起均不接单或开工，接单后断网仍能保留本地状态。
 - [ ] 4.3 为确定性测试 Worker 实现持久检查点及进程重启恢复/转 `recovery_required`；使用相同数据目录杀停并重启子进程，验证既有 Assignment 恢复且不从空任务或未证明幂等的副作用重新开始（T-14）；同步更新运行状态文档。
 - [ ] 4.4 将取消 gate 与 Worker 执行资格纳入相同 Assignment 数据库串行化边界；用两个独立连接交错提交 T-35，验证取消先提交则拒绝开工、开工先提交则同 run identity 接受安全停止且不伪造 `stopped_by_cancel`。
@@ -39,15 +39,15 @@
 
 ## 6. CaptureFact 与本地 FileRecord
 
-- [ ] 6.1 实现 `LocalCaptureFact` 与 `LocalFileRecord` 状态机 `staging_intent → staged_verified → published → available` 及异常态；逐态验证文件引用只在最终事务后开放，且本地 `available` 不生成 Cloud Asset/ready 事实。
-- [ ] 6.2 实现同一持久文件系统内唯一 staging 文件、flush/fsync、摘要确认、原子 no-replace 发布及文件/源目标父目录同步；验证现存 final 绝不覆盖，发布失败时保留 staging/original。
+- [ ] 6.1 实现 `LocalCaptureFact` 与 `LocalFileRecord` 状态机；分别持久提交 `staging_intent`、`staged_verified`、rename/fsync 后的 `published` 和最终业务事务的 `available`；逐态验证引用门槛及本地 `available` 不生成 Cloud Asset/ready 事实（T-46）。
+- [ ] 6.2 实现同一持久文件系统内唯一 staging 文件、flush/fsync、摘要确认、原子 no-replace 发布及文件/源目标父目录同步；随后单独提交 `published`，最终事务再写 CaptureFact/Outbox/sequence 并置 `available`；验证现存 final 绝不覆盖，发布失败保留原件。
 - [ ] 6.3 保持事件 Outbox 与 M3 媒体上传/授权状态分离；测试事件收据不删除或上传原片、不产生 Cloud `MediaObject`/ready/grant，并记录 M4.4 媒体接口边界。
 - [ ] 6.4 使用 dirfd/no-follow 或等价路径安全机制拒绝绝对路径、`..`、符号链接、根目录替换及越界引用；运行 T-39 检查不存在对数据根外文件的读取或覆盖。
 
 ## 7. 文件与数据库崩溃补偿
 
 - [ ] 7.1 实现每次启动必需的 Schema/Identity/活动 FileRecord/未结恢复/Assignment checkpoint/Inbox-Cursor-Outbox 连续性/Hold/目录关系扫描；readiness 在扫描完成前保持 recovering，不让 Worker/Dispatcher 使用未验证记录。
-- [ ] 7.2 为临时写入中、验证后 rename 前、rename 后 DB 提交前、DB 提交后进程退出分别注入崩溃；复用原持久目录验证恢复能幂等补偿或转人工状态，覆盖 T-11、T-12、T-13。
+- [ ] 7.2 为临时写入、rename 前、rename 后 `published` 提交前、`published` 提交后最终 `available` 提交前及最终提交后注入崩溃；复用原目录验证幂等恢复及 CaptureFact/Outbox/sequence 至多一次，覆盖 T-11–T-13、T-46。
 - [ ] 7.3 实现孤立文件和孤立数据库记录登记、隔离与人工恢复证据；缺失/损坏文件或孤立文件测试验证原始字节和数据库证据均保留，不自动覆盖、引用或删除。
 - [ ] 7.4 注入 ENOSPC、fsync/SQLite IO 错误、EXDEV、目标已存在和符号链接替换；运行 T-36–T-40，验证未生成可引用 CaptureFact/Outbox、原始字节保留、跨卷不 copy-delete、故障原因可以持久或在可写后幂等补录。
 - [ ] 7.5 实现历史文件分级核验（未完成/非 clean shutdown/open recovery/元数据变化完整 hash；正常历史项快速 metadata 检查并安排完整巡检）；运行 T-43 记录文件数、总大小、scan/hash/recovery/DB/readiness 耗时且不设生产 SLA。
@@ -68,7 +68,7 @@
 
 ## 10. 集成验收、追溯与交付文档
 
-- [ ] 10.1 组合独立子进程、持久 SQLite/文件目录、FakeClock/FakeNetwork、MockCloudAdapter、OS lock 和确定性 Worker，运行 T-01–T-43 的全套隔离矩阵；验证无公网 health/本地持久化（T-20），记录真实测试 checkout SHA、结果及与 M4.2 非 M4.3/M4.4 的边界。
+- [ ] 10.1 组合独立子进程、持久 SQLite/文件目录、FakeClock/FakeNetwork、MockCloudAdapter、OS lock 和确定性 Worker，运行 T-01–T-46 全套隔离矩阵；验证无公网 health/本地持久化（T-20），记录真实测试 checkout SHA、结果及 M4.2/M4.3/M4.4 边界。
 - [ ] 10.2 更新 Edge Runtime README、隔离运行与人工恢复指南，明确身份绑定/轮换、单实例锁、命令校验、各状态机、升级保护、文件路径安全/完整性策略、初始化/升级/诊断命令及生产待决项；从干净环境逐条照文档执行，不要求 Cloud 或真实场馆硬件。
 - [ ] 10.3 完成全模块兼容检查：`git diff --check`、OpenSpec strict、Cloud 源码/六份 Cloud 主规格/OpenAPI/迁移/Cloud CI 未变更检查；报告把 Cloud 既有 M1–M3 回归与 M4.2 Edge 运行验收分开。
 
@@ -81,12 +81,12 @@
 | M4.2 Requirement | 场景 | Task | Test/验收证据 |
 | --- | --- | --- | --- |
 | EPR-01 身份、独立数据边界、Schema/单实例 | 空目录、重复初始化、绑定/轮换/错绑、锁竞争、升级失败 | 2.1–2.5 | T-01–T-03、T-21–T-25、T-41–T-42 |
-| EPR-02 严格命令 Inbox/cursor/ACK | 原子提交、协议边界、非法中间命令、固定轮次和 ACK 分离 | 3.1–3.4 | T-04、T-05、T-10、T-26–T-32、T-34 |
-| EPR-03 持久接收/接单/执行分离与状态机 | 固定水位、取消、接单同事务、Worker 恢复、取消竞争 | 4.1–4.4 | T-06、T-14、T-16、T-35 |
+| EPR-02 严格命令 Inbox/cursor/ACK | 原子提交、协议边界、非法中间命令、固定轮次、页尾 `next_after` 和 ACK 分离 | 3.1–3.4 | T-04、T-05、T-10、T-26–T-32、T-34、T-44 |
+| EPR-03 Cloud Task 快照/投影版本与 Edge 接单/执行状态机 | 固定水位、Cloud Projection Revision 重放/乱序、取消、接单同事务、Worker 恢复 | 4.1–4.4 | T-06、T-14、T-16、T-35、T-45 |
 | EPR-04 事实/不可变 Outbox/并发序号 | 重复事实、同 ID 冲突、连续序号、迟到事实、独立连接竞争 | 5.1–5.4、8.3 | T-07–T-10、T-16、T-33 |
 | EPR-05 Assignment 投递隔离 | 重试预算耗尽、永久拒绝、另一分配继续 | 9.2–9.3 | T-17、T-19；各 Assignment 独立序号/状态与保留事件 |
-| EPR-06 文件阶段、路径安全及登记后可引用 | 暂存/发布/available、ENOSPC/fsync/EXDEV、路径替换、缺失/损坏/孤立 | 6.1–6.4、7.2–7.4 | T-11–T-13、T-36–T-40 |
-| EPR-07 启动恢复、Schema 保护与分级扫描 | 任务/账本恢复、候选升级、切换中断、文件 hash 边界/性能度量 | 2.2、7.1–7.5、8.4 | T-03、T-14、T-18、T-41–T-43 |
+| EPR-06 文件阶段、`published` 持久提交、路径安全及登记后可引用 | 暂存/发布/available、发布崩溃、ENOSPC/fsync/EXDEV、路径替换、缺失/损坏/孤立 | 6.1–6.4、7.2–7.4 | T-11–T-13、T-36–T-40、T-46 |
+| EPR-07 启动恢复、投影版本、Schema 保护与分级扫描 | 投影版本重启、候选升级、切换及 FileRecord 阶段中断、文件 hash/性能 | 2.2、4.1、7.1–7.5、8.4 | T-03、T-14、T-18、T-41–T-46 |
 | EPR-08 多原因 Node safety_hold 与局部恢复阻断 | 断网/401、可信停用、多个原因聚合、Assignment 故障隔离、取消安全停止 | 8.1–8.5 | T-15、T-16、T-18、T-35 |
 | EPR-09 readiness 与脱敏诊断 | 无公网、身份错配、扫描中、库/文件不可用、hold/局部恢复影响 | 1.3、8.5、10.1 | T-20、T-22、T-43 |
 
@@ -165,6 +165,9 @@
 | W3 | EPR-01/EPR-07：迁移前/中、DDL 后 revision 写入失败或候选验证失败，原库 revision、业务行、Inbox/Outbox/序号可恢复 | 2.2 | T-41 | M4.2 SQLite upgrade；M4.3 PG schema 独立；M4.4 双端数据库不合并 |
 | W3 | EPR-07：原子切换前/后（含 manifest 未完成）退出，重启唯一辨识活动/候选库并保持安全 | 2.2 | T-42 | M4.2 manifest/cutover；M4.3 不涉及；M4.4 不属于网络联调 |
 | W4 | EPR-07/EPR-09：混合文件目录启动扫描按分级 hash 策略恢复，报告计数/耗时并在关键扫描结束前不 ready | 7.1、7.5 | T-43 | M4.2 启动扫描/可测策略；M4.3 不涉及；M4.4 可复核但不设生产 SLA |
+| P0-02 | M4.1 A1/A2、R4/S4.1/S4.3 → EPR-02：`next_after` 与非空页末命令/固定 `round_through` 一致，空页不推进，异常重启从持久 Cursor 续取 | 3.3 | T-44 | M4.2 页校验/本地游标；M4.3 提供契约分页；M4.4 真实响应/重连联调 |
+| P0-03 | M4.1 D1、Sync API/Reconcile 对账规则 → EPR-03/EPR-07：`projection_revision` 幂等单调，独立校验 `task_version` 且不改 Edge 执行事实 | 4.1 | T-45 | M4.2 本地投影账本；M4.3 Cloud 投影产生/版本；M4.4 真实 reconcile/restart |
+| W2 | M4.1 D3、W1.1–W1.7 → EPR-06/EPR-07：rename/fsync 后独立提交 `published`；阶段间重启只产生一份 CaptureFact/Outbox/sequence | 6.1–6.2、7.2 | T-46 | M4.2 文件/DB 提交恢复；M4.3 不涉及；M4.4 真实媒体流程另验 |
 
 ## 隔离测试编号
 
@@ -213,6 +216,9 @@
 | T-41 | 分别在迁移前、迁移中、DDL 已执行但 revision 写入失败、候选完整性/数据不变量验证失败时中断；活动原库 revision、业务行、RuntimeIdentity、Inbox、Outbox 和序号可重开并恢复，绝不指向候选库。 |
 | T-42 | 分别在候选验证后原子切换前、原子替换完成后但 manifest 未更新时崩溃；启动由 manifest、唯一活动路径、revision 和摘要区分旧库/已切换候选，确认一致则审计完成，不一致则 not-ready 并待显式恢复；不得出现不确定活动库或空库。 |
 | T-43 | 在含正常 available、staging/未完成、异常退出关联和 orphan 的固定合成文件集上执行启动扫描；记录文件数/总大小/快速扫描、完整 hash、unfinished recovery、DB 查询、readiness 时间并核验分级结果。 |
+| T-44 | 覆盖正确尾游标、next_after 小于/大于页尾、超过 round_through、空页、重复页和异常后重启；无效页整页零应用，空页不推进，重启从 last_applied_sequence 重取且不越 ACK。 |
+| T-45 | 覆盖更高/相同/更低 projection_revision、相同 revision 异内容、重启持久化，以及 task_version 独立变化/回退；旧投影不覆盖，新投影不改 Edge Assignment/事实/Outbox。 |
+| T-46 | 分别在 rename 前、rename/fsync 后但 published 提交前、published 提交后 available 提交前崩溃；重启恢复阶段且最终最多一份 CaptureFact、一条 Outbox 和一个 Assignment sequence。 |
 
 ## Workflow follow-up
 

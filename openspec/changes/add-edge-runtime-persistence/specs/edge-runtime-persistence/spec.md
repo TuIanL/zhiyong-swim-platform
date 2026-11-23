@@ -36,7 +36,7 @@ Edge Runtime SHALL 使用独立数据目录、版本化 Schema 和唯一 `LocalR
 
 ### Requirement: 命令 Inbox 与连续游标原子持久化
 
-Edge SHALL 严格按 M4.1 校验下行分页和命令后，才在同一持久事务中保存单条已验证命令、命令产生的本地效果和连续游标。单页最多 50 条，每条命令 JSON UTF-8 实际字节不超过 8192，字段/版本/方向/UUID/UTC/整数/载荷遵循正式契约；活动 `round_through` 跨重启固定。只有事务提交后的连续水位可用于 Command ACK；重复或非法命令不得重复应用或越过缺口。
+Edge SHALL 按 M4.1 严格校验下行分页和命令（单页最多 50 条）。每条已验证命令、对应本地效果和连续游标须原子提交，活动 `round_through` 跨重启固定。分页尾游标、空页、重复页及 ACK 规则见下列场景。
 
 #### Scenario: 命令事务提交后才发送 ACK
 - **WHEN** Edge 收到下行命令并成功提交 Inbox、命令效果及游标
@@ -64,7 +64,11 @@ Edge SHALL 严格按 M4.1 校验下行分页和命令后，才在同一持久事
 
 #### Scenario: 固定命令水位跨重启
 - **WHEN** 已持久化当前同步轮次的 `round_through`，但尚未连续应用至该水位时进程重启
-- **THEN** Edge MUST 从原水位续取和恢复，MUST NOT 用新响应上界覆盖未完成轮次；只有 Cursor 连续到达该值后才可结束本轮并开启下一轮
+- **THEN** Edge MUST 从持久 `last_applied_sequence` 续取并保留原 `round_through`，MUST NOT 用 `next_after` 或新响应上界覆盖本地进度/未完成轮次；只有 Cursor 连续到达该值后才可结束本轮并开启下一轮
+
+#### Scenario: 分页尾游标与命令连续尾部一致
+- **WHEN** CloudAdapter 返回一页命令及 `through`、`next_after`，或返回空页
+- **THEN** 请求 `after`、响应 `through`、`next_after` MUST 是非布尔 JSON 整数，范围为 0 到 2^53−1；`through` MUST 不小于请求 `after`，`next_after` MUST 满足 `after <= next_after <= round_through`。非空页命令序号 MUST 从 `after+1` 连续到本页最后一条，且 `next_after` MUST 等于该尾序号；空页 MUST 令 `next_after == after`，不推进 Cursor。`next_after` 小于/大于非空页尾、超过 `round_through`、空页虚报推进或其他页尾不一致 MUST 在应用任何命令前拒绝整页；重复页只可按已持久同 ID/同内容幂等重放。异常后重启 MUST 以 `last_applied_sequence` 重取，MUST NOT ACK 越位或跳过命令。
 
 #### Scenario: ACK 状态与 Inbox/Task 阶段分离
 - **WHEN** Command ACK 尚未发送、发送响应丢失或已收到响应
@@ -72,7 +76,7 @@ Edge SHALL 严格按 M4.1 校验下行分页和命令后，才在同一持久事
 
 ### Requirement: 持久接收、业务接单和实际执行相互区分
 
-本地 Task SHALL 单独保存 Cloud 控制快照/版本；LocalAssignment SHALL 将 `pending_acceptance`、`accepted`、`running`、`completed`、`failed`、`stopped_by_cancel` 与 `normal`/`recovery_required` 分开表示。持久接收或 Command ACK MUST NOT 自动接单或开工；Edge 只有在固定命令水位追平、Assignment 未取消、无 Node SafetyHold 且无该 Assignment 恢复阻断时才可持久接单/取得执行资格。
+LocalTrainingTask SHALL 独立持久化 Cloud 任务快照和版本；LocalAssignment SHALL 独立持久化 Edge 执行阶段及恢复状态。命令持久接收或 ACK 不代表业务接单或实际执行；门槛规则见下列场景。
 
 #### Scenario: 未追平或已取消时不接单
 - **WHEN** 命令轮仍未达到固定水位，或同一 Assignment 已应用取消命令
@@ -87,8 +91,12 @@ Edge SHALL 严格按 M4.1 校验下行分页和命令后，才在同一持久事
 - **THEN** Edge MUST 保留可离线恢复的接单状态，但不得报告实际开始执行或自动越过取消/安全挂起门槛
 
 #### Scenario: Cloud 控制快照与 Edge 阶段分别转移
-- **WHEN** Edge 应用 `training_task.assigned`、`training_task.cancelled` 或本地执行事实
-- **THEN** Edge MUST 分别更新持久 Cloud 快照/版本与本地 Assignment phase；MUST NOT 将 Edge phase 当成 Cloud 正式 Task 状态或直接改写 Cloud 投影
+- **WHEN** Edge 应用 `training_task.assigned`、`training_task.cancelled`、Reconcile Task 投影或本地执行事实
+- **THEN** Edge MUST 分别持久保存 `cloud_task_status`（M4.1 枚举 `assigned`、`accepted`、`completed`、`failed`、`cancelled`）、`cloud_task_version`、`cloud_projection_revision` 与本地 Assignment phase；Reconcile 只应用比本地更高的 `projection_revision`，同 revision 同投影幂等、旧 revision 不得覆盖；MUST NOT 将 Edge phase 当成 Cloud 正式 Task 状态，或因快照更新改写 Assignment phase、执行事实、CaptureFact 或 Outbox。
+
+#### Scenario: Cloud Task 投影 revision 重放与乱序
+- **WHEN** Reconcile 返回较新 revision、相同 revision 重放或较旧 revision，且 `task_version` 独立变化
+- **THEN** Edge MUST 只按 `projection_revision` 判断投影新旧，并独立验证 `task_version` 的 M4.1 非布尔安全整数/正整数规则；更高 revision 可在 task_version 不变时更新快照，但不得令 task_version 回退。相同 revision 且 status/task_version 相同是 no-op，较旧 revision 连同其状态和 task_version 一起忽略；相同 revision 异字段或较新 revision 携带回退的 task_version MUST 保留原快照并留下 Task 作用域诊断/`recovery_required`，不得改变 Edge Assignment 或 Outbox。
 
 #### Scenario: 取消与开工竞争
 - **WHEN** 同一 Assignment 的取消应用事务与执行资格事务并发
@@ -140,11 +148,15 @@ Edge SHALL 对每个 Assignment 维护独立的投递进度和有界重试状态
 
 ### Requirement: 文件在验证和数据库登记完成前不可引用
 
-Edge SHALL 将 FileRecord 按 `staging_intent`、`staged_verified`、`published`、`available` 和阻断异常态分阶段持久化。只有完整校验、同卷不覆盖发布及 FileRecord/CaptureFact/Outbox 提交后才能本地引用；本地 `available` MUST NOT 表示 Cloud `VideoAsset.ready`，文件故障 MUST NOT 自动删除原始视频。
+Edge SHALL 将 FileRecord 按 `staging_intent`、`staged_verified`、`published`、`available` 和阻断异常态分阶段持久化；文件 rename 与父目录 fsync 完成后 MUST 通过独立数据库事务持久提交 `published`，之后才可在另一最终业务事务提交 CaptureFact/Outbox/序号并变为 `available`。只有完整校验、同卷不覆盖发布及最终业务事务提交后才能本地引用；本地 `available` MUST NOT 表示 Cloud `VideoAsset.ready`，文件故障 MUST NOT 自动删除原始视频。
 
 #### Scenario: 暂存文件通过验证后发布
 - **WHEN** 文件临时写入完成且大小与 SHA-256 校验通过
-- **THEN** Edge SHALL 按 `staging_intent → staged_verified → published → available` 顺序推进，在同一数据卷使用不覆盖现存目标的原子发布，并只在最终数据库事务提交 FileRecord、事实与 Outbox 后开放本地引用
+- **THEN** Edge SHALL 先提交 `staging_intent`、再提交 `staged_verified`；同卷 no-replace rename 与文件/父目录 fsync 完成后，MUST 在独立 DB 提交点持久写入 `published`。随后仅在最终事务原子提交 `FileRecord=available`、CaptureFact、Outbox 和 Assignment sequence 后开放本地引用
+
+#### Scenario: published 提交前后崩溃恢复
+- **WHEN** 进程分别在 rename 前、rename+fsync 成功但 `published` DB 提交前、`published` 已提交但最终 `available` 事务前退出
+- **THEN** 重启 MUST 依 intent/path/hash 收敛对应状态：rename 前保持 staging；rename 后重验并幂等提交 `published`，不得先建 CaptureFact/Outbox；`published` 后重验并原子补交最终业务事务。恢复全过程 MUST 最多产生一份 CaptureFact、一条不可变 Outbox 和一个 Assignment sequence，不得覆盖或删除原文件
 
 #### Scenario: 校验前进程崩溃
 - **WHEN** 进程在临时文件写入、验证或发布期间退出

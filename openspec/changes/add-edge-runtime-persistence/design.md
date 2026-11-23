@@ -61,7 +61,7 @@ Adapters: MockCloudAdapter | Clock | Network | Deterministic Worker
 | `LocalCommandInbox` | `event_id` PK；唯一 `(node_id, command_sequence)`；索引 `(assignment_id, command_sequence)` | 只保存通过 M4.1 严格验证并在本地事务应用的规范命令、SHA-256 fingerprint、版本、scope 和结果；异参不得替换原值 |
 | `CommandCursor` | `node_id` PK；`last_applied_sequence >= 0`；活动轮次的 `round_through` 可空但一旦开启即持久固定 | 表示本地已原子应用的最高连续命令序号；不能用 Cloud ACK 推断本地状态；未追平固定上界前不接受新的上界 |
 | `CommandAckState` | `node_id` PK；`desired_through`、最近尝试/响应水位及时间 | ACK 投递元数据与 Inbox 应用状态分离；目标由已提交 cursor 派生，失败/丢响应可重发，不改变命令、接单或执行状态 |
-| `LocalTrainingTask` | Cloud `task_id` PK；保存外部 Tenant/Site/Session IDs | 单独保存 Cloud 控制快照（v1 至少 assigned/cancelled）与 Cloud task version，不冒充 Cloud 正式状态 |
+| `LocalTrainingTask` | Cloud `task_id` PK；保存外部 Tenant/Site/Session IDs | 单独保存 `cloud_task_status`（`assigned`、`accepted`、`completed`、`failed`、`cancelled`）、`cloud_task_version` 与 `cloud_projection_revision`；前者是 Cloud 当前任务投影，后两者分别表示命令版本和投影版本。尚无 Reconcile 投影时 revision 为空，首次有效正整数 revision 初始化它；不冒充 Edge Assignment phase |
 | `LocalAssignment` | `assignment_id` PK；v1 `task_id` 唯一；`next_event_sequence` 单调 | Edge phase、取消门、执行 run ID/attempt/checkpoint 与 `recovery_state` 分开；v1 的单 Task/单 Assignment/单 Node 约束继承 M4.1 Q1 |
 | `LocalCaptureFact` | `capture_id` PK；唯一 `(tenant_id,site_id,node_id,assignment_id,capture_id)` | 保存 M4.1 白名单的来源 Device、已知 UTC/原始设备时间、有限 metadata 和可空 file_id |
 | `LocalEventOutbox` | `event_id` PK；唯一 `(assignment_id,sequence)`；索引 `(delivery_state,next_attempt_at)` | 保存不可变 canonical envelope/fingerprint；传输状态、尝试预算与匹配收据是可变的投递元数据 |
@@ -89,11 +89,15 @@ Adapters: MockCloudAdapter | Clock | Network | Deterministic Worker
 | --- | --- | --- |
 | Runtime readiness | `uninitialized → initializing → recovering → ready`；另有 `not_ready`、`identity_mismatch`、全局 `recovery_required` | 空目录只由显式 init 进入；Schema/身份不符、锁失败、关键扫描未完成均不 ready。Node SafetyHold 与局部 Assignment 故障是并行阻断维度，不必关闭本地 health API |
 | Command Inbox | 网络输入的 `received → validated` 仅为内存态；只有同事务已应用行才持久为 `applied`；同内容重放返回已有结果；异内容、序号冲突、非法/不支持版本进入流诊断；无法证明可安全兼容的流持久为 `recovery_required` | 未校验不能插入 Inbox；每条已应用命令与其本地控制效果和 Cursor 同事务。ACK 尝试由 `CommandAckState` 单独记账，不改变 Inbox、Task 或 Worker 状态。阻断保留当前 `round_through`，只可在兼容版本明确支持且验证通过后，或经审计的人工恢复后解除 |
-| CommandCursor | `last_applied_sequence` 只按 `n → n+1`；活动 `round_through` 首页检查后持久固定，追平到该值后才能清空并开启下一轮 | 超过期待序号的命令不应用、不 ACK；重启继续原水位，不用新的 Cloud 水位替换未完成轮次。ACK target 等于已提交连续 cursor，Cloud 返回 ACK 水位仅作观察 |
-| LocalTrainingTask | Cloud 控制快照 `assigned → cancelled`（以及契约未来明确的控制快照）；控制版本按命令更新 | Edge 保存快照和版本，不修改 Cloud 正式 Task 状态；Cloud 合法终态优先，迟到事实只按 M4.1 上报 |
+| CommandCursor | `last_applied_sequence` 只按 `n → n+1`；活动 `round_through` 首页检查后持久固定，追平到该值后才能清空并开启下一轮 | 分页响应的 `next_after` 只声明该页尾部位置，不是持久进度。非空页必须等于本页最后命令序号，空页保持请求 `after` 不动；重启一律从 `last_applied_sequence` 续取。超过期待序号的命令不应用、不 ACK；ACK target 等于已提交连续 cursor，Cloud 返回 ACK 水位仅作观察 |
+| LocalTrainingTask | 持久 Cloud 快照状态为 `assigned`、`accepted`、`completed`、`failed`、`cancelled`；分别保存 `cloud_task_version` 与 `cloud_projection_revision` | 仅按 Reconcile 的递增 `projection_revision` 应用快照；`task_version` 独立按命令版本规则校验，不能代替投影排序。快照更新不改写 LocalAssignment phase、CaptureFact 或 Outbox；Cloud 合法终态优先，迟到事实只按 M4.1 上报 |
 | LocalAssignment | Edge phase `pending_acceptance → accepted → running → completed/failed`；实际安全停机后可 `running → stopped_by_cancel`；恢复维度 `normal ↔ recovery_required` 独立 | accepted 与 accepted Outbox 原子提交；实际开工前重新验证 accepted、未取消、无 Node hold、无局部 recovery block 并持久取得执行资格；终态最多一份；取消提交在先则不发放开工资格 |
-| LocalFileRecord | `staging_intent → staged_verified → published → available`；任一不确定/损坏态转 `recovery_required` 或只读 `quarantined` | `available` 要求已验证摘要、同卷无覆盖发布、文件存在且 FileRecord/CaptureFact/Outbox 事务提交。只有此本地状态可被 Edge 引用；不等于 Cloud `VideoAsset.ready` |
+| LocalFileRecord | `staging_intent → staged_verified → published → available`；各正向状态均有独立数据库提交点；任一不确定/损坏态转 `recovery_required` 或只读 `quarantined` | rename 与父目录 fsync 成功后，单独提交 `file_state=published`；后续最终业务事务才原子写 CaptureFact/Outbox/Assignment sequence 并把 FileRecord 改为 `available`。只有 `available` 可被 Edge 引用；不等于 Cloud `VideoAsset.ready` |
 | SafetyHold / Recovery | Node Hold 每个原因独立 `active → released`；Assignment RecoveryRecord `open → resolved` | 任一 active Node Hold 阻止该 Node 所有新开工；任一 open assignment block 只阻止该 Assignment。解除一个原因不清除其余原因；重启不做隐式解挂 |
+
+### B.3 Cloud Task 投影版本
+
+`LocalTrainingTask` 持久保存 `cloud_task_status`、`cloud_task_version`、`cloud_projection_revision` 三个独立值。状态枚举严格沿用 M4.1：`assigned`、`accepted`、`completed`、`failed`、`cancelled`。尚无 Reconcile 投影时 `cloud_projection_revision` 为空，首次有效正整数 revision 初始化 Cloud 投影；此后仅在 `projection_revision > cloud_projection_revision` 时应用。比较的 Cloud 投影字段为 `task_id/status/task_version`，不包括独立变化的节点水位；相同 revision 且这些字段完全相同是幂等重放，较旧 revision 连同其状态和 task_version 一起忽略；相同 revision 但状态或 task_version 不同属于投影冲突，保留旧快照并写 Task 作用域的 `recovery_required` 诊断。`task_version` 是命令版本，按 M4.1 的非布尔安全整数/正整数版本范围独立验证，并在应用较新投影时不得回退；允许 projection_revision 前进而 task_version 不变，禁止用任一字段代替另一字段排序或验证。更新 Cloud 快照不直接改写 Edge `LocalAssignment` phase、执行检查点、CaptureFact 或 Outbox；Assignment 控制效果仍由对应持久命令和本地事务落实。
 
 “持久 Inbox 已 applied”“命令 ACK 已发送/已知被 Cloud 确认”“Assignment accepted”“Worker running”四种事实有分离字段/实体和提交时点。Command ACK 不创建 accepted 状态；任务状态不可从 ACK 水位反推。
 
@@ -103,7 +107,8 @@ Adapters: MockCloudAdapter | Clock | Network | Deterministic Worker
 | --- | --- | --- |
 | 接收命令 | Inbox 原 envelope + 命令本地效果/Task 状态 + `CommandCursor` | 仅发送最新连续 `through` ACK；丢响应可从持久 cursor 重发 |
 | 业务接单 | 本地 Assignment/Task 接单状态 + sequence=1 的 `training_task.accepted` Outbox | 允许离线调度；事务失败时不接单/不执行 |
-| 采集事实 | LocalCaptureFact + `LocalFileRecord=available` + Outbox envelope + Assignment sequence | 仅在该事务提交后允许本地引用；上传媒体仍为独立授权流程 |
+| 文件进入 `published` | 已发布 final 路径对应的 `LocalFileRecord=file_state=published`、`published_at` 和已验证文件元数据 | 此独立 DB 提交不产生 CaptureFact、Outbox 或 Assignment sequence；对象仍不可供业务引用 |
+| 采集事实最终化 | LocalCaptureFact + `LocalFileRecord=available` + Outbox envelope + Assignment sequence | 同一最终事务原子提交；提交后才允许本地引用，上传媒体仍为独立授权流程 |
 | 真实任务终态 | LocalTrainingTask/Assignment 终态 + 原 outcome 的 Outbox envelope + sequence | 终态只写一次；迟到事实不删除或改写 Cloud cancelled 的结果 |
 | 收据确认 | 精确 request scope 与 ID/sequence/disposition 通过后的投递状态、原收据 | 单独更新 delivery metadata，不修改 event envelope |
 | 挂起/解挂 | `LocalSafetyHold` 审计记录 + Assignment 调度门槛 | hold 持久生效；重启不清除 |
@@ -136,9 +141,11 @@ PostgreSQL 在多进程写入、备份/监控和现场运维能力清晰时可�
 
 1. 先提交 staging FileRecord intent 和 file_id/最终路径/关联业务事实标识。
 2. 以唯一临时名写文件，flush/fsync，计算大小和 SHA-256；需要预期摘要时必须相等。
-3. 提交 `staged_verified` 状态，随后使用同卷、原子且 no-replace 的发布原语 rename 到唯一最终路径，并 fsync 文件和源/目标父目录。目标已存在时不覆盖；若目标平台无可靠 no-replace 原语则 fail closed，不用 check-then-rename 或 copy+delete 伪装原子性。
-4. 最终 DB 事务一起写 `FileRecord=available`、LocalCaptureFact 和不可变 Outbox；这一提交之前任何消费者都不得引用对象。本地 `available` 只表示 Edge 文件通过本地条件，不代表 Cloud MediaObject 或 `VideoAsset.ready`。
-5. 每次启动按 FileRecord 扫描阶段、路径、size 和元数据；未完成/上次异常关联/未结恢复/元数据异常的文件须完整重算 SHA-256，普通历史文件走分级快速检查和定期完整性巡检（见 K.4）。
+3. 提交 `staged_verified` 状态。
+4. 使用同卷、原子且 no-replace 的发布原语 rename 到唯一最终路径，并 fsync 文件和源/目标父目录。目标已存在时不覆盖；若目标平台无可靠 no-replace 原语则 fail closed，不用 check-then-rename 或 copy+delete 伪装原子性。
+5. rename 与目录 fsync 均成功后，单独提交 `FileRecord=file_state=published` 及其发布时间/文件元数据。该提交点是 `published` 的定义；此事务不生成业务事实或序号，文件仍不可被 Worker/API 引用。
+6. 在另一个最终业务事务中一起写 `LocalCaptureFact`、不可变 Outbox envelope、Assignment sequence，并把 FileRecord 改为 `available`。只有该事务提交后才允许本地引用；本地 `available` 不代表 Cloud MediaObject 或 `VideoAsset.ready`。
+7. 每次启动按 FileRecord 扫描阶段、路径、size 和元数据；未完成/上次异常关联/未结恢复/元数据异常的文件须完整重算 SHA-256，普通历史文件走分级快速检查和定期完整性巡检（见 K.4）。
 
 | 崩溃窗口 | 恢复处理 |
 | --- | --- |
@@ -146,9 +153,11 @@ PostgreSQL 在多进程写入、备份/监控和现场运维能力清晰时可�
 | 临时文件写入中 | DB intent 存在但缺少验证 hash；标记 `recovery_required`，保留 temp/original 文件 |
 | temp fsync 后、DB 记录校验值前 | 重新计算并按 intent/已知目标验证；证据不全则挂起，不猜测归属 |
 | verified temp 后、rename 前 | 重算并匹配持久摘要后重试 rename；不匹配就隔离 |
-| rename 后、最终 DB 提交前 | final 仍对应 verified staging intent 时，重验 hash 并补最终 DB 事务；不重写事实/序号 |
-| 最终事务提交失败或进程退出 | SQLite 回滚到前态；按上一行使用持久 intent 收敛，不删除 final |
-| 最终 DB 提交成功后退出 | 启动重验；一致则恢复引用，不一致则 `recovery_required` 并阻止读取/执行 |
+| rename 和目录 fsync 后、`published` DB 提交前 | 持久状态仍为 `staged_verified`；依据 intent、final path 和摘要重验，幂等提交 `published`，不生成 CaptureFact/Outbox/sequence |
+| `published` 提交后、最终业务事务前 | 重验 final 后原子补做 CaptureFact、Outbox/sequence 和 `available`；唯一事实键保证最多一次，不重复追加序号 |
+| `published` 提交失败或进程退出 | DB 保持 `staged_verified`；按前一行扫描并收敛，不删除 final |
+| 最终业务事务提交失败或进程退出 | DB 保持 `published`，不存在半个业务事务；重启校验后幂等重试，不覆盖文件 |
+| 最终业务事务提交成功后退出 | 启动重验；一致则恢复引用，不一致则 `recovery_required` 并阻止读取/执行 |
 | DB row 指向缺失/损坏文件 | 保留 DB/文件证据，标记异常，不以 Cloud ACK 或重新录制覆盖旧引用 |
 | file 无 DB row | 隔离 orphan、登记人工恢复；M4.2 不自动清理任何原始视频 |
 
@@ -194,7 +203,7 @@ ENOSPC、fsync 错误、EXDEV 和路径检查失败都走同一失败闭环：�
 
 ### J. 隔离测试与故障注入
 
-本 Change 的设计测试使用持久 SQLite 数据文件、持久临时/最终文件目录、可注入 clock/network、MockCloudAdapter 和合成 payload；独立子进程重启时复用相同数据目录，SQLite 并发场景用两个独立 Connection/Session。Tasks 保留 T-01–T-20，并增加 T-21–T-43 覆盖身份/进程锁、严格命令/固定水位、并发序号、文件系统异常、升级中断保护及分级启动扫描和性能记录。测试矩阵按 EPR Requirement 和状态转移拆到各自实现任务，不以 Task 10 取代组内验收。
+本 Change 的设计测试使用持久 SQLite 数据文件、持久临时/最终文件目录、可注入 clock/network、MockCloudAdapter 和合成 payload；独立子进程重启时复用相同数据目录，SQLite 并发场景用两个独立 Connection/Session。Tasks 保留 T-01–T-20，并增加 T-21–T-46 覆盖身份/进程锁、严格命令/固定水位与 `next_after`、Cloud Projection Revision、并发序号、文件系统异常/`published` 提交点、升级中断保护及分级启动扫描和性能记录。测试矩阵按 EPR Requirement 和状态转移拆到各自实现任务，不以 Task 10 取代组内验收。
 
 M4.2 验收到隔离适配器边界即止。无 Cloud 服务、无两套真实进程 HTTP 联调、无摄像头/GPU、无生产环境配置或数据；M4.4 另绑定真实提交 SHA 与网络集成证据。
 
@@ -216,7 +225,7 @@ CloudAdapter 必须向 Command Service 暴露可验证原始 JSON 字节或等�
 
 严格规则完全引用 `docs/contracts/cloud-edge-sync-v1.md`：对象字段闭集、重复 JSON key/未知字段/错误方向/未支持类型或版本拒绝；`schema_version` 必须是整数 1（不能接受布尔值）；UUID 为小写连字符规范；UTC 时间采用契约的等义 `Z` 表示；JSON 整数处于安全整数范围；可选时间缺失统一省略、显式 null 拒绝；命令载荷/枚举/Task 与 Assignment 版本和 Node/Tenant/Site 归属必须符合该契约。命令实际字段和规范化以正式契约及其示例为唯一来源，M4.2 不另起协议。
 
-分页级先验校验包括对象形状、列表形状、页数、`through` 类型/安全范围/不回退及与已持久活动轮次相等。若一个新轮次首响应通过这些检查，则在处理第一个命令前单独原子持久化 `round_through`；重启必须继续该上界，不能另取水位覆盖。该页结构本身非法则整页零应用、零 Cursor 变化。分页合法后，逐条命令完整校验，再对连续序号应用独立原子事务。若 N 非法、缺失、异 ID 占同序号或同 ID 异内容：N 前已提交的合法连续前缀保留；N 不写入 Inbox/效果/Cursor，N 后均不应用；ACK target 只能是 N−1；流保留在同一 `round_through` 并转为诊断/`recovery_required`。重复同 ID/同内容/同序号重放原结果但不二次执行；不得跳过 N 等待后续命令。诊断只记录错误类别、期望/观察序号、字段路径和正文指纹等有界脱敏信息，不存完整未经信任的 raw page。
+分页级先验校验包括对象形状、闭集字段 `commands`/`through`/`next_after`、列表形状和页数；请求 `after`、响应 `through`、`next_after` 均须为非布尔 JSON 整数，范围为 0 到 2^53−1，且 `through >= after`。`through` 不回退且活动轮次内必须等于已持久的 `round_through`。`next_after` 必须满足 `after <= next_after <= round_through`。非空页命令序号须从 `after+1` 连续到本页最后一条，且 `next_after` 必须等于该尾序号。空页必须满足 `next_after == after`，不能宣称推进；只有本地 Cursor 已等于 `round_through` 才能结束轮次，若 `after < round_through` 则保持原水位/游标、不 ACK 越位并按有界重试处理，持续无进展转 `recovery_required`。精确重复页仅允许逐条命令与已持久 Inbox 完全同 ID/同内容，按重放幂等，不回退本地 Cursor。任一分页游标/尾部校验失败，整页零应用、零 Cursor 变化。`next_after` 是服务端页位置声明，不持久化为本地已应用进度；下一次进程启动/故障重试一律以持久 `last_applied_sequence` 构造 `after`。若一个新轮次首响应全部通过这些分页级检查，则在处理第一个命令前单独原子持久化 `round_through`；重启必须继续该上界，不能另取水位覆盖。分页合法后，逐条命令完整校验，再对连续序号应用独立原子事务。若 N 非法、缺失、异 ID 占同序号或同 ID 异内容：N 前已提交的合法连续前缀保留；N 不写入 Inbox/效果/Cursor，N 后均不应用；ACK target 只能是 N−1；流保留在同一 `round_through` 并转为诊断/`recovery_required`。重复同 ID/同内容/同序号重放原结果但不二次执行；不得跳过 N 等待后续命令。诊断只记录错误类别、期望/观察序号、字段路径和正文指纹等有界脱敏信息，不存完整未经信任的 raw page。
 
 `CommandAckState.desired_through` 从 `last_applied_sequence` 派生。网络发送尝试、Cloud 响应水位在单独 ACK 记录中可审计，但不能修改 Inbox `applied` 状态或代表 Task 已接单/Worker 已执行。完成当前固定轮次的唯一条件是本地连续 Cursor 到达该轮 `round_through`；提交完成后才能清空轮次并开始新拉取。
 
