@@ -10,46 +10,55 @@
 
 ## 2. 数据目录、SQLite 与版本化 Schema
 
-- [ ] 2.1 实现显式 `EDGE_DATA_DIR` 布局、目录权限/路径校验、独立 SQLite 文件与 Edge 自有 SQLAlchemy/Alembic 配置；检查初始化生成文件和独立 migration history，不修改 Cloud 依赖或迁移。
-- [ ] 2.2 实现显式初始化及版本升级命令；以干净目录初始化、重复初始化保留账本、旧版本升级、新版本拒绝和升级失败保留原库（T-01、T-02、T-03）验收，并补齐本模块初始化/恢复文档。
-- [ ] 2.3 为本地账本实现外部 Cloud ID、唯一约束、索引、Schema 版本及必要的写入事务；静态检查 Alembic revision 可逆/可诊断约定，SQLite 文件重新打开后逐项核对约束与持久值。
+- [ ] 2.1 实现显式 `EDGE_DATA_DIR` 布局、目录权限/路径校验、独立 SQLite 文件与 Edge 自有 SQLAlchemy/Alembic 配置；初始化和启动校验 canonical root、staging/objects 同卷和独立 migration history，不修改 Cloud 依赖或迁移。
+- [ ] 2.2 实现显式 init/upgrade 命令和 OS 锁接入；旧库先经 SQLite Backup API 得一致快照，再在候选库升级/验证/受控原子切换；以 T-01、T-02、T-03、T-41、T-42 验证重复 init 保留数据、候选失败保护及中断恢复，补齐初始化/恢复说明。
+- [ ] 2.3 为本地账本实现外部 Cloud ID、唯一约束、索引、Schema 版本及事务不变量；Schema 验证包含 `integrity_check`、`foreign_key_check`、revision 与数据不变量，并在 SQLite 重开后核对原 Inbox/Outbox/序号不变。
+- [ ] 2.4 建立单例 `LocalRuntimeIdentity`（runtime_instance_id、tenant/site/node、initialized_at、绑定时 schema_version、identity_state）；用 T-21/T-22 验证同 Node 凭据轮换复用原账本、不同 scope 不 ready 且不读/发旧 Outbox、不改绑定。
+- [ ] 2.5 用 OS advisory lock 独占同一 `EDGE_DATA_DIR` 的 Runtime、初始化和升级；两个独立进程/初始化器竞争及进程强制退出后运行 T-23–T-25，验证只授予一个运行权、初始化/升级互斥、内核释放死进程锁。
 
 ## 3. Command Inbox 与下发连续游标
 
-- [ ] 3.1 持久化经校验的原始命令信封、fingerprint、命令结果和连续 cursor；将 Inbox、命令效果与 cursor 合入同一事务，事务提交后才允许生成 ACK；以提交前崩溃及重开相同目录验证无半提交（T-04）。
+- [ ] 3.1 对 CloudAdapter 返回的分页结构/through 做页级预检，再对每条原始命令按 M4.1 验证后保存规范信封/fingerprint；命令 Inbox、命令效果与 cursor 同事务提交，验证提交前崩溃不留半账本（T-04）。
 - [ ] 3.2 实现命令重复接收幂等、同 ID/序号异内容冲突留证，以及提交后 ACK 响应丢失时从持久 cursor 重发相同水位；以子进程在持久接收后、ACK 前退出并恢复验证（T-05），并注入丢失 ACK 验证不重复应用命令效果（T-10）。
-- [ ] 3.3 实现固定下发轮次水位和乱序/重放处理，不以 ACK 或远端游标猜测未提交的本地命令；对乱序分页、重复页、缺口及重放运行可控序列测试，并记录该模块场景与本 Change Requirement 的对应关系。
+- [ ] 3.3 实现 `round_through` 固定上界持久化，未追平不得换新水位；对乱序分页、重复页、缺口及重启恢复运行可控序列测试，并核对 ACK target 不超过本地连续 applied cursor。
+- [ ] 3.4 按 8192 UTF-8 字节/命令、50 命令/页、schema_version=1、重复键/字段闭集、UUID/UTC/安全整数/方向/载荷规则完成严格 validator；逐项运行 T-26–T-32，验证非法 N 阻止后缀和 ACK 越位，并在 Spec/M4.1 契约样例间做字段对照。
 
 ## 4. 本地 Task、Assignment 与执行门槛
 
-- [ ] 4.1 持久化本地任务/分配影子、状态来源、执行 ID 与确定性 checkpoint；区分命令持久接收、Command ACK、本地业务接单和实际开工；以“接单与 accepted Outbox 同事务”、ACK 后未接单不得启动的测试验收（T-06）。
+- [ ] 4.1 持久化 Cloud 控制快照与 Edge LocalTask/Assignment phase、恢复状态、run ID 和确定性 checkpoint；分开表示 Inbox applied、ACK 投递、业务接单和实际开工，以 T-06 验证接单/outbox 同事务且 ACK 不开工。
 - [ ] 4.2 实现固定水位追平、未取消且无 active safety hold 的业务接单门槛，以及独立的执行门槛；验证未追平/已取消/已挂起均不接单或开工，接单后断网仍能保留本地状态。
 - [ ] 4.3 为确定性测试 Worker 实现持久检查点及进程重启恢复/转 `recovery_required`；使用相同数据目录杀停并重启子进程，验证既有 Assignment 恢复且不从空任务或未证明幂等的副作用重新开始（T-14）；同步更新运行状态文档。
+- [ ] 4.4 将取消 gate 与 Worker 执行资格纳入相同 Assignment 数据库串行化边界；用两个独立连接交错提交 T-35，验证取消先提交则拒绝开工、开工先提交则同 run identity 接受安全停止且不伪造 `stopped_by_cancel`。
 
 ## 5. Outbox、Assignment 序号与回执幂等
 
 - [ ] 5.1 实现每 Assignment 独立的连续序号和不可变规范事件信封；事实、序号、`event_id` 与 Outbox 必须同事务提交，发送元数据与信封分离；验证连续编号及两个 Assignment 互不争用序号（T-09）。
 - [ ] 5.2 实现同事实重复提交返回原事件身份/序号、同 ID 异内容保留原件并转 `recovery_required`；以重复提交与冲突注入覆盖（T-07、T-08），并逐字段检查原 envelope 重试前后字节/fingerprint 不变。
 - [ ] 5.3 实现收据按认证 scope、`event_id`、`assignment_id`、sequence、disposition 精确匹配；模拟响应丢失、HTTP 200 但收据错配、重复收据及正确收据，验证只有正确收据销账且重启后可重投原 envelope（T-10）。
+- [ ] 5.4 以两个独立 SQLite Connection/Session 并发提交同一 Assignment 的不同事实和同一事实重放；运行 T-33/T-34，验证唯一连续序号、无重复业务效果、失败方读取获胜事务原结果及有界 `SQLITE_BUSY` 重试。
 
 ## 6. CaptureFact 与本地 FileRecord
 
-- [ ] 6.1 实现 `LocalCaptureFact` 与 `LocalFileRecord` 最小数据访问层、文件状态机和相对路径校验；文件写入、size/SHA-256 校验、ready 引用门槛符合 Spec；校验失败或记录不完整时文件不得被任务/API 引用。
-- [ ] 6.2 实现同一持久文件系统内唯一 staging 文件、flush/fsync、摘要确认、原子发布和目录同步；验证成功文件只有在 `FileRecord`、CaptureFact、对应 Outbox 同一最终 DB 事务提交后才可读。
+- [ ] 6.1 实现 `LocalCaptureFact` 与 `LocalFileRecord` 状态机 `staging_intent → staged_verified → published → available` 及异常态；逐态验证文件引用只在最终事务后开放，且本地 `available` 不生成 Cloud Asset/ready 事实。
+- [ ] 6.2 实现同一持久文件系统内唯一 staging 文件、flush/fsync、摘要确认、原子 no-replace 发布及文件/源目标父目录同步；验证现存 final 绝不覆盖，发布失败时保留 staging/original。
 - [ ] 6.3 保持事件 Outbox 与 M3 媒体上传/授权状态分离；测试事件收据不删除或上传原片、不产生 Cloud `MediaObject`/ready/grant，并记录 M4.4 媒体接口边界。
+- [ ] 6.4 使用 dirfd/no-follow 或等价路径安全机制拒绝绝对路径、`..`、符号链接、根目录替换及越界引用；运行 T-39 检查不存在对数据根外文件的读取或覆盖。
 
 ## 7. 文件与数据库崩溃补偿
 
-- [ ] 7.1 实现启动期文件账本对账：逐项检查 staging/final 路径、大小、SHA-256、状态和业务关联；readiness 在验证完成前保持 false，未验证文件不能供 Worker 或 API 引用。
+- [ ] 7.1 实现每次启动必需的 Schema/Identity/活动 FileRecord/未结恢复/Assignment checkpoint/Inbox-Cursor-Outbox 连续性/Hold/目录关系扫描；readiness 在扫描完成前保持 recovering，不让 Worker/Dispatcher 使用未验证记录。
 - [ ] 7.2 为临时写入中、验证后 rename 前、rename 后 DB 提交前、DB 提交后进程退出分别注入崩溃；复用原持久目录验证恢复能幂等补偿或转人工状态，覆盖 T-11、T-12、T-13。
 - [ ] 7.3 实现孤立文件和孤立数据库记录登记、隔离与人工恢复证据；缺失/损坏文件或孤立文件测试验证原始字节和数据库证据均保留，不自动覆盖、引用或删除。
+- [ ] 7.4 注入 ENOSPC、fsync/SQLite IO 错误、EXDEV、目标已存在和符号链接替换；运行 T-36–T-40，验证未生成可引用 CaptureFact/Outbox、原始字节保留、跨卷不 copy-delete、故障原因可以持久或在可写后幂等补录。
+- [ ] 7.5 实现历史文件分级核验（未完成/非 clean shutdown/open recovery/元数据变化完整 hash；正常历史项快速 metadata 检查并安排完整巡检）；运行 T-43 记录文件数、总大小、scan/hash/recovery/DB/readiness 耗时且不设生产 SLA。
 
 ## 8. 离线恢复、取消与 safety_hold
 
-- [ ] 8.1 实现可持久、可审计的 `LocalSafetyHold` 与显式解挂操作；断网、自然过期、单独撤钥或原因不明 401 不触发 hold；只有模拟的已验证停用/可信本地停机触发 hold，并验证重启/重认证不清除（T-15）。
+- [ ] 8.1 实现按原因独立持久的 Node 级 `LocalSafetyHold` 与针对 hold_id 的审计解挂；断网/自然过期/仅撤钥/原因不明 401 不触发，只有可信原因触发，T-15 验证重启保持且解除一项不解除其他项。
 - [ ] 8.2 实现取消命令的持久 cancellation gate；未开工任务取消后禁止开工，运行任务需保存 checkpoint 并证明安全停止后才提交 `stopped_by_cancel`；测试未经停止证明不得生成该事实。
 - [ ] 8.3 保留已取消 Assignment 的离线迟到事实及原 Outbox，确保可补投但不会重开任务、改写 Cloud 终态或生成新接单；以取消后事实补投测试验收（T-16），并与 M4.1 的 W1 语义逐项对照。
 - [ ] 8.4 实现游标缺口、账本冲突、坏摘要、不可解释执行状态的持久 `recovery_required` 与受控人工处置；测试恢复原因跨重启保留、人工动作超时仍挂起、恢复后保留原信封/事实（T-18）。
+- [ ] 8.5 将 Node SafetyHold 和 Assignment RecoveryRecord 作用域分开；用 T-15/T-18 验证 Assignment 故障只阻断本分配、Node 任一有效 hold 阻止所有新开工、每个原因独立解除且受影响外的健康分配可继续。
 
 ## 9. P01–P10 隔离参数与故障隔离
 
@@ -59,8 +68,8 @@
 
 ## 10. 集成验收、追溯与交付文档
 
-- [ ] 10.1 组合独立子进程、持久 SQLite/文件目录、FakeClock/FakeNetwork、MockCloudAdapter 和确定性 Worker，运行全套本 Change 隔离集成矩阵 T-01–T-20；验证无公网 health/本地持久化可用（T-20），记录每次实际运行的提交 SHA 和结果。
-- [ ] 10.2 更新 Edge Runtime README、隔离运行与人工恢复指南，明确安装/显式初始化/升级/启动/诊断命令、故障注入方法、Mock 限制和生产待决项；从干净环境逐条照文档执行，不要求 Cloud 或真实场馆硬件。
+- [ ] 10.1 组合独立子进程、持久 SQLite/文件目录、FakeClock/FakeNetwork、MockCloudAdapter、OS lock 和确定性 Worker，运行 T-01–T-43 的全套隔离矩阵；验证无公网 health/本地持久化（T-20），记录真实测试 checkout SHA、结果及与 M4.2 非 M4.3/M4.4 的边界。
+- [ ] 10.2 更新 Edge Runtime README、隔离运行与人工恢复指南，明确身份绑定/轮换、单实例锁、命令校验、各状态机、升级保护、文件路径安全/完整性策略、初始化/升级/诊断命令及生产待决项；从干净环境逐条照文档执行，不要求 Cloud 或真实场馆硬件。
 - [ ] 10.3 完成全模块兼容检查：`git diff --check`、OpenSpec strict、Cloud 源码/六份 Cloud 主规格/OpenAPI/迁移/Cloud CI 未变更检查；报告把 Cloud 既有 M1–M3 回归与 M4.2 Edge 运行验收分开。
 
 ## Requirement / Scenario → Task → Test 验收矩阵
@@ -71,15 +80,15 @@
 
 | M4.2 Requirement | 场景 | Task | Test/验收证据 |
 | --- | --- | --- | --- |
-| EPR-01 独立数据边界/版本化 Schema | 新目录、重复初始化、旧版升级、未知版本及失败保库 | 2.1–2.3 | T-01、T-02、T-03；SQLite 重开与 revision/数据核对 |
-| EPR-02 Inbox/cursor 原子持久化 | 提交前崩溃、提交后 ACK、ACK 丢失、重复/冲突命令 | 3.1–3.3 | T-04、T-05、T-10；事务原子性、cursor 和 ACK 重发证据 |
-| EPR-03 持久接收/接单/执行分离 | 固定水位未追平、取消、接单同事务、接单后未开工、离线恢复 | 4.1–4.3 | T-06、T-14；状态轨迹与子进程恢复记录 |
-| EPR-04 事实/不可变 Outbox/收据 | 重复事实、同 ID 冲突、连续序号、迟到事实、精确收据 | 5.1–5.3、8.3 | T-07–T-10、T-16；原 envelope/fingerprint 与匹配收据记录 |
+| EPR-01 身份、独立数据边界、Schema/单实例 | 空目录、重复初始化、绑定/轮换/错绑、锁竞争、升级失败 | 2.1–2.5 | T-01–T-03、T-21–T-25、T-41–T-42 |
+| EPR-02 严格命令 Inbox/cursor/ACK | 原子提交、协议边界、非法中间命令、固定轮次和 ACK 分离 | 3.1–3.4 | T-04、T-05、T-10、T-26–T-32、T-34 |
+| EPR-03 持久接收/接单/执行分离与状态机 | 固定水位、取消、接单同事务、Worker 恢复、取消竞争 | 4.1–4.4 | T-06、T-14、T-16、T-35 |
+| EPR-04 事实/不可变 Outbox/并发序号 | 重复事实、同 ID 冲突、连续序号、迟到事实、独立连接竞争 | 5.1–5.4、8.3 | T-07–T-10、T-16、T-33 |
 | EPR-05 Assignment 投递隔离 | 重试预算耗尽、永久拒绝、另一分配继续 | 9.2–9.3 | T-17、T-19；各 Assignment 独立序号/状态与保留事件 |
-| EPR-06 文件校验/登记后方可引用 | staging 校验、原子发布、崩溃、孤立与坏引用 | 6.1–6.3、7.1–7.3 | T-11、T-12、T-13；文件 hash、DB 记录及恢复状态 |
-| EPR-07 重启恢复与事实保留 | 执行重启、账本缺口、坏摘要/人工恢复 | 4.3、7.1–7.3、8.4 | T-14、T-18；同目录恢复或明确 `recovery_required` |
-| EPR-08 safety_hold 与取消停止证据 | 断网/401、可信停用、重启、取消与实际安全停止 | 8.1–8.4 | T-15、T-16；审计记录、hold 持续及 outcome 条件 |
-| EPR-09 本地健康/诊断 | 无公网、库或文件卷不可用、诊断脱敏 | 1.3、10.1 | T-20；本地 HTTP 响应、readiness、脱敏输出 |
+| EPR-06 文件阶段、路径安全及登记后可引用 | 暂存/发布/available、ENOSPC/fsync/EXDEV、路径替换、缺失/损坏/孤立 | 6.1–6.4、7.2–7.4 | T-11–T-13、T-36–T-40 |
+| EPR-07 启动恢复、Schema 保护与分级扫描 | 任务/账本恢复、候选升级、切换中断、文件 hash 边界/性能度量 | 2.2、7.1–7.5、8.4 | T-03、T-14、T-18、T-41–T-43 |
+| EPR-08 多原因 Node safety_hold 与局部恢复阻断 | 断网/401、可信停用、多个原因聚合、Assignment 故障隔离、取消安全停止 | 8.1–8.5 | T-15、T-16、T-18、T-35 |
+| EPR-09 readiness 与脱敏诊断 | 无公网、身份错配、扫描中、库/文件不可用、hold/局部恢复影响 | 1.3、8.5、10.1 | T-20、T-22、T-43 |
 
 ### M4.1 Requirement / Scenario → M4.2 行为 → Task → Test → 责任
 
@@ -127,6 +136,36 @@
 | M6：媒体传输故障/续传 | 仅注入本地写入、rename、DB 崩溃，不替代 M3 网络故障测试（EPR-06） | 7.1–7.3 | T-11、T-12、T-13 | M4.2 本地补偿；M4.3 M3 API 行为；M4.4 网络/续传故障 |
 | M7：媒体与训练任务关联 | 仅保留本地外部关联 ID，不创建/覆盖 Cloud Session/Asset（EPR-06） | 6.1、6.3 | T-13、边界审查 | M4.2 本地索引；M4.3 Cloud 权威关联；M4.4 真实业务链路 |
 
+### P0 / W1–W4 Requirement / Scenario → Task → Test → 责任追溯
+
+下列场景的行为 Owner 均为 M4.2 Edge 本地账本；M4.3 仅负责真实 Cloud 授权/命令来源、服务端游标/回执及 Cloud 侧并发，M4.4 才验证真实双进程网络、重认证/掉线及既有 M3 媒体往返。Mock 测试不代替后续阶段。
+
+| Review 项 | Requirement / Scenario | Task | Test | M4.2 / M4.3 / M4.4 责任 |
+| --- | --- | --- | --- | --- |
+| P0-01 | EPR-01：同 Node 重启和 Credential 轮换继续复用原 RuntimeIdentity/账本 | 2.4 | T-21 | M4.2 本地身份与隔离 Mock；M4.3 提供 credential 作用域；M4.4 真实同 Node reissue |
+| P0-01 | EPR-01：不同 Tenant/Site/Node 复用目录时 fail closed、不读/发旧 Outbox | 2.4 | T-22 | M4.2 身份门；M4.3 认证来源；M4.4 双节点认证边界 |
+| P0-01 | EPR-01：两个 Runtime 竞争同目录只有一个拿到 OS 锁 | 2.5 | T-23 | M4.2 独占锁；M4.3 不涉及；M4.4 验证部署不共享运行卷 |
+| P0-01/W3 | EPR-01/EPR-07：init/upgrade 与运行服务互斥 | 2.5 | T-24 | M4.2 同锁契约；M4.3 不涉及；M4.4 按实际部署约束补充 |
+| P0-01 | EPR-01：异常退出后锁由 OS 释放且残留锁文件不永久阻塞 | 2.5 | T-25 | M4.2 进程锁；M4.3 不涉及；M4.4 仅部署环境检查 |
+| P0-02 | EPR-02：单命令 UTF-8 8192 字节边界 | 3.4 | T-26 | M4.2 validator；M4.3 返回符合契约的 command；M4.4 实际 HTTP 边界 |
+| P0-02 | EPR-02：每页 50 条通过、51 条整页拒绝且零应用 | 3.4 | T-27 | M4.2 页预检；M4.3 分页实现；M4.4 真实分页网络 |
+| P0-02 | EPR-02：重复 JSON Key/未知字段/非法 UUID 拒绝 | 3.4 | T-28 | M4.2 严格解析；M4.3 契约字段；M4.4 对接验证 |
+| P0-02 | EPR-02：不支持 Schema/方向、非安全整数、非法 UTC 拒绝 | 3.4 | T-29 | M4.2 严格 validator；M4.3 契约响应；M4.4 跨端错误映射 |
+| P0-02 | EPR-02：第 N 条非法时合法前缀可留、N 及后缀不应用、Cursor 不越位 | 3.4 | T-30 | M4.2 逐命令事务；M4.3 命令序号；M4.4 丢包/重放验证 |
+| P0-02 | EPR-02：固定 `round_through` 跨进程重启原值恢复 | 3.3–3.4 | T-31 | M4.2 持久轮次；M4.3 提供稳定上界；M4.4 网络轮次恢复 |
+| P0-02 | EPR-02：前缀不重做、非法命令不 ACK、后续命令不越缺口 | 3.2–3.4 | T-32 | M4.2 Cursor/ACK gate；M4.3 Cloud ACK 水位；M4.4 端到端序号恢复 |
+| W1 | EPR-04：两个 SQLite 连接并发 append 不重复/不跳 Assignment sequence | 5.4 | T-33 | M4.2 本地事务/唯一约束；M4.3 Cloud 上行锁序独立；M4.4 真实双端流水 |
+| W1 | EPR-02/EPR-04：并发重复命令/事实仅一次效果并返回获胜持久结果 | 3.4、5.4 | T-34 | M4.2 本地幂等；M4.3 Cloud 幂等独立；M4.4 请求重放 |
+| P0-03/W1 | EPR-03/EPR-08：取消先提交拒绝开工；启动资格先提交则同 run identity 安全停止 | 4.4 | T-35 | M4.2 本地 gate；M4.3 Cloud 终态/取消权威；M4.4 双端竞态验收 |
+| W2 | EPR-06/EPR-07：文件写入或 SQLite DB/WAL ENOSPC 不产生可引用事实/Outbox，保留恢复锚点并转正确就绪状态 | 7.4 | T-36 | M4.2 文件/SQLite 恢复；M4.3 不涉及；M4.4 媒体上传异常另验 |
+| W2 | EPR-06：文件/父目录 fsync 失败不推进 published/available | 7.4 | T-37 | M4.2 fsync 边界；M4.3 不涉及；M4.4 目标硬件检查不由本用例替代 |
+| W2 | EPR-06：EXDEV 禁止 copy+delete、保留 staging 并阻断引用 | 7.4 | T-38 | M4.2 同卷文件流程；M4.3 不涉及；M4.4 生产挂载类型独立评估 |
+| W2 | EPR-06：路径穿越、符号链接、硬链接/重复路径归属和根目录替换被拒绝 | 6.4、7.4 | T-39 | M4.2 本地路径边界；M4.3 不涉及；M4.4 部署权限补充验证 |
+| W2 | EPR-06：final 缺失/损坏/孤立文件不引用、不覆盖、不删除 | 7.3–7.4 | T-40 | M4.2 文件对账；M4.3 不涉及；M4.4 M3 上传前重新验证 |
+| W3 | EPR-01/EPR-07：迁移前/中、DDL 后 revision 写入失败或候选验证失败，原库 revision、业务行、Inbox/Outbox/序号可恢复 | 2.2 | T-41 | M4.2 SQLite upgrade；M4.3 PG schema 独立；M4.4 双端数据库不合并 |
+| W3 | EPR-07：原子切换前/后（含 manifest 未完成）退出，重启唯一辨识活动/候选库并保持安全 | 2.2 | T-42 | M4.2 manifest/cutover；M4.3 不涉及；M4.4 不属于网络联调 |
+| W4 | EPR-07/EPR-09：混合文件目录启动扫描按分级 hash 策略恢复，报告计数/耗时并在关键扫描结束前不 ready | 7.1、7.5 | T-43 | M4.2 启动扫描/可测策略；M4.3 不涉及；M4.4 可复核但不设生产 SLA |
+
 ## 隔离测试编号
 
 | Test | 场景与预期 |
@@ -151,6 +190,29 @@
 | T-18 | `recovery_required` 跨重启保持；人工恢复有审计；等待超时仍挂起且原事实不删除。 |
 | T-19 | 多 Assignment 中一个流永久拒绝/缺口时单独隔离，另一个健康流仍可投递/执行。 |
 | T-20 | 无公网时本地 health/diagnostics/API 与持久化可用；数据库/文件卷不可用时 not-ready，诊断脱敏。 |
+| T-21 | 同一 Tenant/Site/Node 重启及 Credential ID 轮换，使用原 RuntimeIdentity、cursor、Task 和 Outbox 账本，不重初始化。 |
+| T-22 | 将 Node B（或不同 Tenant/Site）配置到 Node A 数据目录；readiness 为 identity_mismatch，旧 Task/Outbox 不读取/执行/发送，身份和原数据未改。 |
+| T-23 | 两个独立 Runtime 进程并发打开同一 `EDGE_DATA_DIR`；OS 锁只授予一个运行权，另一个在启动 Dispatcher/消费者前失败。 |
+| T-24 | Runtime 持锁运行时并发执行 init/upgrade；init/upgrade 无法越过锁，反向升级运行期也不得双开服务。 |
+| T-25 | 持锁 Runtime 被 SIGKILL/异常退出后，OS 自动释放锁；残留 lock 文件存在不阻断后续显式恢复启动。 |
+| T-26 | 对单条命令测量原始 UTF-8 JSON 字节；8192 字节通过、8193 字节在解析/持久化前拒绝。 |
+| T-27 | 50 条命令分页可继续处理；51 条整页拒绝且 Inbox、命令效果、Cursor 均无变化。 |
+| T-28 | 逐一注入重复 JSON Key、未知字段、非小写连字符 UUID；均拒绝且产生有界脱敏诊断。 |
+| T-29 | 注入 `schema_version` 非整数 1（含布尔值）、错误方向/类型、非 JSON 安全整数及非规范 UTC/显式 null；均不持久化或推进 Cursor。 |
+| T-30 | 连续命令 N 前缀合法、N 非法且 N+1 后缀合法；只保留前缀，Cursor/ACK 不超过 N−1，后缀不应用；无法证明兼容安全时流持久为 `recovery_required`，保持同一轮次并等待兼容升级或审计人工恢复。 |
+| T-31 | 持久 `round_through` 后在分页中途杀停；重启继续旧上界，未追平前不得获取/保存新上界替换它。 |
+| T-32 | 合法前缀重启后不重复应用，非法命令不 ACK，后续序号不越过缺口；验证 ACK attempt/response 与 Inbox applied、Task phase 分离。 |
+| T-33 | 两个独立 SQLite Connection 并发提交同 Assignment 两个不同事实；`(assignment_id,sequence)` 唯一连续、无重复效果/空洞，事务外无网络等待。 |
+| T-34 | 两个独立会话并发提交同一命令或采集事实；只产生一次效果，未获胜请求读回并返回同一持久 ID/sequence。 |
+| T-35 | 两独立连接交错 Worker start-claim 与取消命令；取消先提交则不能开工，start claim 先提交则取消沿同 run identity 请求安全停止，只有真实安全停止才报 outcome。 |
+| T-36 | 分别注入 staging/最终目录文件写入 ENOSPC 与 SQLite DB/WAL ENOSPC；无可引用 CaptureFact/Outbox。空间仍可写时持久 intent/RecoveryRecord；DB 无法写时保持 not-ready 并以故障前 intent/文件作为恢复锚点，重开确认账本后在可写时幂等补记；不把未确认提交当成功。 |
+| T-37 | 文件 fsync、源/目标父目录 fsync 分别失败；不推进 published/available，不开放引用或覆盖对象，readiness/局部阻断符合扫描策略。 |
+| T-38 | staging 与 objects 跨设备或 rename 返回 EXDEV；不 copy+delete，不删源文件，不产生 available FileRecord。 |
+| T-39 | `../`、绝对路径、staging/final 符号链接替换、数据根目录替换、越界引用、非预期硬链接及多个业务记录指向同一不可变路径均按策略拒绝；不读取根目录外内容、不覆盖对象。 |
+| T-40 | 注入 final 缺失/损坏、DB 行无文件和无 DB 行 orphan；保留原 bytes/DB 证据、禁止引用和覆盖、不自动删除原片。 |
+| T-41 | 分别在迁移前、迁移中、DDL 已执行但 revision 写入失败、候选完整性/数据不变量验证失败时中断；活动原库 revision、业务行、RuntimeIdentity、Inbox、Outbox 和序号可重开并恢复，绝不指向候选库。 |
+| T-42 | 分别在候选验证后原子切换前、原子替换完成后但 manifest 未更新时崩溃；启动由 manifest、唯一活动路径、revision 和摘要区分旧库/已切换候选，确认一致则审计完成，不一致则 not-ready 并待显式恢复；不得出现不确定活动库或空库。 |
+| T-43 | 在含正常 available、staging/未完成、异常退出关联和 orphan 的固定合成文件集上执行启动扫描；记录文件数/总大小/快速扫描、完整 hash、unfinished recovery、DB 查询、readiness 时间并核验分级结果。 |
 
 ## Workflow follow-up
 
